@@ -1,0 +1,11 @@
+// Cloudflare Workers (static assets only). Push to main → Cloudflare runs the build and deploys dist/.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "crazyblood",
+  "compatibility_date": "2026-09-23",
+  "build": { "command": "npm run build" },
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}

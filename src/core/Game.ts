@@ -57,6 +57,9 @@ export class Game {
     bus.on('lineage:started', () => void SaveSystem.save());
 
     this.hookLifecycle();
+    platform.onPauseChange((paused) => {
+      if (paused) { AudioManager.stopMusic(); SaveSystem.saveSync(); } else AudioManager.playMusic('music_farm');
+    });
     // Dev tools: always on desktop dev builds; on touch devices only with ?dev in the URL (keeps phones clean).
     const wantDev = IS_DEV && (/[?&]dev\b/.test(location.search) || !matchMedia('(pointer: coarse)').matches);
     if (IS_DEV) (window as unknown as { __hemo: unknown }).__hemo = { game: this.phaser, store };
