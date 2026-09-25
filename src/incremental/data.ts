@@ -1,44 +1,73 @@
-export type UpgradeId = 'roots' | 'blade' | 'gloves' | 'pruner' | 'nectar' | 'scythe' | 'moonlight' | 'thorns' | 'legacy';
-
-export interface Upgrade {
-  id: UpgradeId;
-  name: string;
-  description: string;
-  icon: string;
-  baseCost: number;
-  growth: number;
-  gain: number;
-  unlockAt: number;
-  effect: 'tap' | 'crit' | 'critPower' | 'combo';
+export type Branch = 'night' | 'fang' | 'servants' | 'blood' | 'eclipse'
+export type Skill = { id:string; name:string; branch:Branch; icon:string; description:string; effect:string; max:number; cost:number; scale:number; requires?:string; x:number; y:number }
+export const BRANCHES: Record<Branch,{label:string;subtitle:string;color:string}> = {
+  night:{label:'NOITE',subtitle:'Dobre o tempo a seu favor',color:'#a99dff'},
+  fang:{label:'PRESA',subtitle:'Cada toque vira uma caçada',color:'#ff6885'},
+  servants:{label:'CORTE',subtitle:'Nunca cace sozinho',color:'#6be7d5'},
+  blood:{label:'BANCO',subtitle:'Faça cada captura valer',color:'#ffc36c'},
+  eclipse:{label:'ECLIPSE',subtitle:'Domine a multidão',color:'#e99bff'},
 }
-
-export const UPGRADES: Upgrade[] = [
-  { id: 'roots', name: 'Raízes Rubras', description: '+1 sangue por colheita', icon: '✿', baseCost: 8, growth: 1.19, gain: 1, unlockAt: 0, effect: 'tap' },
-  { id: 'blade', name: 'Lâmina de Seiva', description: '+4 sangue por colheita', icon: '⚔', baseCost: 65, growth: 1.21, gain: 4, unlockAt: 35, effect: 'tap' },
-  { id: 'gloves', name: 'Luvas da Sorte', description: '+2% de crítico', icon: '✦', baseCost: 110, growth: 1.38, gain: 0.02, unlockAt: 60, effect: 'crit' },
-  { id: 'pruner', name: 'Foice Carmesim', description: '+22 sangue por colheita', icon: '☾', baseCost: 450, growth: 1.23, gain: 22, unlockAt: 280, effect: 'tap' },
-  { id: 'nectar', name: 'Néctar Instável', description: '+0,5× no crítico', icon: '◆', baseCost: 850, growth: 1.35, gain: 0.5, unlockAt: 500, effect: 'critPower' },
-  { id: 'scythe', name: 'Colheita Sombria', description: '+130 sangue por colheita', icon: '♠', baseCost: 2800, growth: 1.26, gain: 130, unlockAt: 1800, effect: 'tap' },
-  { id: 'moonlight', name: 'Luar Fértil', description: '+2% por nível de combo', icon: '☽', baseCost: 5200, growth: 1.34, gain: 0.02, unlockAt: 3200, effect: 'combo' },
-  { id: 'thorns', name: 'Espinhos Eternos', description: '+850 sangue por colheita', icon: '✣', baseCost: 16000, growth: 1.29, gain: 850, unlockAt: 9000, effect: 'tap' },
-  { id: 'legacy', name: 'Fruto Ancestral', description: '+6000 sangue por colheita', icon: '❖', baseCost: 90000, growth: 1.31, gain: 6000, unlockAt: 50000, effect: 'tap' },
-];
-
-export const RITUALS = [
-  { name: 'A Semente', amount: 500, story: 'A primeira raiz desperta sob a terra.' },
-  { name: 'A Raiz', amount: 3000, story: 'O sangue percorre os campos esquecidos.' },
-  { name: 'O Broto', amount: 15000, story: 'A fazenda responde ao chamado da lua.' },
-  { name: 'A Floração', amount: 80000, story: 'Flores vermelhas cobrem a noite.' },
-  { name: 'A Colheita', amount: 400000, story: 'A força da terra alcança o céu.' },
-  { name: 'A Lua Faminta', amount: 2000000, story: 'O eclipse começa a se romper.' },
-  { name: 'A Lua Rubra', amount: 10000000, story: 'Restaure a Lua Rubra e complete a lenda.' },
-];
-
-export function formatNumber(value: number): string {
-  if (!Number.isFinite(value)) return '∞';
-  if (Math.abs(value) < 1000) return Math.floor(value).toLocaleString('pt-BR');
-  const units = ['', 'mil', 'mi', 'bi', 'tri', 'qa', 'qi'];
-  const group = Math.min(Math.floor(Math.log10(Math.abs(value)) / 3), units.length - 1);
-  const scaled = value / Math.pow(1000, group);
-  return scaled.toLocaleString('pt-BR', { maximumFractionDigits: scaled < 10 ? 2 : scaled < 100 ? 1 : 0 }) + ' ' + units[group];
+const X=[125,345,565,785,1005], Y=[142,270,398,526,654,782]
+const s=(id:string,name:string,branch:Branch,icon:string,description:string,effect:string,max:number,cost:number,scale:number,col:number,row:number,requires?:string):Skill=>({id,name,branch,icon,description,effect,max,cost,scale,requires,x:X[col],y:Y[row]})
+export const SKILLS:Skill[]=[
+  s('moon','Lua tardia','night','☾','O amanhecer demora a chegar.','+7 s de noite',7,28,1.78,0,0),
+  s('mist','Passos na névoa','night','◈','A névoa atrasa a fuga dos humanos.','Humanos 8% mais lentos',5,55,1.95,0,1,'moon'),
+  s('stalk','Sombra paciente','night','✧','Alvos raros permanecem por mais tempo.','+6 s para alvos especiais',4,110,2.1,0,2,'mist'),
+  s('vigor','Sangue antigo','night','♥','Seu corpo aguenta mais contra-ataques.','+2 de vida',6,155,1.95,0,3,'stalk'),
+  s('dusk','Crepúsculo eterno','night','☀','Estenda o último instante da noite.','+15 s de noite',3,420,2.6,0,4,'vigor'),
+  s('immortal','Noite sem fim','night','✺','A lua resiste ao amanhecer.','+35 s de noite',2,3500,3,0,5,'dusk'),
+  s('fang','Presas afiadas','fang','◆','Cada toque causa mais dano.','+1 dano por toque',7,35,1.85,1,0),
+  s('reach','Garras longas','fang','⌁','Atinge alvos próximos do toque.','+10 px de alcance',5,65,1.9,1,1,'fang'),
+  s('drain','Sede de caça','fang','◉','Capturas restauram sua vida.','Cura 1 a cada 5 capturas',4,125,2.1,1,2,'reach'),
+  s('cleave','Garra carmesim','fang','✣','Seu golpe alcança humanos próximos.','+1 alvo por toque',4,280,2,1,3,'drain'),
+  s('frenzy','Frenesi','fang','✹','Combos aumentam seu dano.','+1 dano a cada 12 combo',3,680,2.4,1,4,'cleave'),
+  s('reaper','Ceifador noturno','fang','✦','Capturas explodem na multidão.','+2 alvos na explosão',2,4200,3,1,5,'frenzy'),
+  s('thrall','Primeiro servo','servants','♟','Um servo captura humanos por você.','+1 servo',8,75,2,2,0,'moon'),
+  s('training','Treino da corte','servants','⚔','Servos dominam humanos resistentes.','+1 força dos servos',6,95,1.9,2,1,'thrall'),
+  s('haste','Ordem de caça','servants','➤','Servos atacam mais vezes.','13% mais velocidade',6,170,2,2,2,'training'),
+  s('pack','Matilha de sombras','servants','♜','Sua corte cresce a cada noite.','+2 servos',5,420,2,2,3,'haste'),
+  s('elite','Guarda rubra','servants','♛','Servos priorizam alvos de missão.','+2 dano em alvos nomeados',3,900,2.3,2,4,'pack'),
+  s('legion','Legião da noite','servants','♚','Uma legião invade a cidade.','+12 servos',2,4900,3,2,5,'elite'),
+  s('bank','Reserva de sangue','blood','◕','Cada captura enche mais o banco.','+25% sangue',7,25,1.8,3,0,'fang'),
+  s('combo','Colheita em série','blood','◇','Capturas rápidas valem mais.','+1% por combo',5,65,1.9,3,1,'bank'),
+  s('contract','Pacto de sangue','blood','✉','Alvos nomeados rendem sangue extra.','+60% recompensa de missão',4,160,2,3,2,'combo'),
+  s('interest','Cofre pulsante','blood','▣','O banco recompensa cada noite.','+5% sangue ao terminar',5,360,2.1,3,3,'contract'),
+  s('feast','Banquete real','blood','♧','Multidões rendem ainda mais.','+15% com 30+ alvos',4,760,2.3,3,4,'interest'),
+  s('treasury','Tesouro eterno','blood','✤','Cada noite rende uma fortuna.','Dobra sangue de capturas',2,5000,3,3,5,'feast'),
+  s('pulse','Pulso sombrio','eclipse','◌','Uma onda captura os mais fracos.','Pulso a cada 16 s',1,150,1,4,0,'thrall'),
+  s('shock','Eco do pulso','eclipse','◎','Cada onda alcança mais humanos.','+3 alvos por pulso',6,210,1.85,4,1,'pulse'),
+  s('surge','Lua faminta','eclipse','☽','Mais humanos entram na cidade.','+20% surgimento',7,320,1.85,4,2,'shock'),
+  s('chain','Corrente rubra','eclipse','∞','Uma captura pode arrastar outra.','+8% chance de corrente',6,670,2.1,4,3,'surge'),
+  s('storm','Tempestade de presas','eclipse','✻','O pulso gera uma captura em cascata.','Pulso a cada 8 s e +8 alvos',2,1600,2.5,4,4,'chain'),
+  s('totality','Eclipse total','eclipse','◉','A cidade cai sob sua sombra.','Servos +50%, pulso +20',1,9000,1,4,5,'storm'),
+]
+for(const skill of SKILLS){
+  if(skill.id==='moon'){skill.x=420;skill.y=160}
+  if(skill.id==='fang'){skill.x=710;skill.y=160}
+  if(['mist','reach','thrall','bank','pulse'].includes(skill.id))skill.y=290
+  if(skill.branch==='eclipse'&&skill.id!=='pulse')skill.y+=128
 }
+export const ERAS=[
+  {name:'Pré-história',years:'30.000 a.C.',icon:'◆',color:'#e4a66a',biome:'cavernas, fogueiras e tribos',cities:[
+    ['Clã da Lua','Nara, a batedora','runner'],['Vale das Cinzas','Grom, o caçador','hunter'],['Rio dos Ossos','Uma, a curandeira','rare'],['Colinas de Fogo','Kara, a guerreira','hunter'],['Grande Caverna','Tarek, o chefe','hunter']]},
+  {name:'Era Medieval',years:'ano 1180',icon:'♜',color:'#c289db',biome:'vilas, mercados e fortalezas',cities:[
+    ['Vila das Lanternas','Mara, a mensageira','runner'],['Mercado de Bruma','Dario, o vigia','hunter'],['Cidade Velha','Iris, a alquimista','rare'],['Fortaleza Rubra','Capitão Solano','hunter'],['Capital do Sol','Regente Aurora','hunter']]},
+  {name:'Era Contemporânea',years:'ano 2026',icon:'▣',color:'#71ccef',biome:'ruas, metrôs e arranha-céus',cities:[
+    ['Bairro Neon','Lia, a entregadora','runner'],['Terminal Central','Raul, o policial','hunter'],['Distrito Industrial','Dra. Vega','rare'],['Centro Financeiro','Chefe Atlas','hunter'],['Metrópole Solar','Prefeita Helia','hunter']]},
+  {name:'Era Futura',years:'ano 2280',icon:'✧',color:'#8ce7e4',biome:'cúpulas, drones e cidades de luz',cities:[
+    ['Colônia Prisma','AX-7, a exploradora','runner'],['Porto Orbital','Sentinela Voss','hunter'],['Núcleo Sintético','Dra. Nyx','rare'],['Bastião Quântico','Comandante Zero','hunter'],['Nova Aurora','Imperatriz Solaris','hunter']]},
+] as const
+export type District={name:string;tag:string;era:number;city:number;population:number;rate:number;baseHp:number;blood:number;target:string;targetType:'runner'|'hunter'|'rare';targetHp:number;targetReward:number;quota:number;intro:string}
+export const DISTRICTS:District[]=ERAS.flatMap((era,eraIndex)=>era.cities.map((city,cityIndex)=>({
+  name:city[0],tag:era.name,era:eraIndex,city:cityIndex,
+  population:[25,45,75,125,210][cityIndex],
+  rate:[1.3,2.8,5.2,9,17][cityIndex]*(1+eraIndex*.12),
+  baseHp:[2,3,4,5,6][cityIndex]+eraIndex,
+  blood:Math.round([4,6,9,13,18][cityIndex]*(1+eraIndex*.25)),
+  target:city[1],targetType:city[2],
+  targetHp:[10,19,28,46,90][cityIndex]+eraIndex*8,
+  targetReward:Math.round([90,210,480,1100,3000][cityIndex]*(1+eraIndex*.3)),
+  quota:[14,35,80,160,300][cityIndex],
+  intro:eraIndex===3&&cityIndex===4?'Objetivo final: capture a Imperatriz Solaris e 1.000 humanos na mesma noite; sobreviva até o amanhecer.':'Capture '+city[1]+' e alcance a meta de '+[14,35,80,160,300][cityIndex]+' capturas para avançar.',
+})))
+export const skillCost=(skill:Skill,level:number)=>Math.round(skill.cost*Math.pow(skill.scale,level))

@@ -1,6 +1,6 @@
-# Hemofarm — Colheita da Lua Rubra
+# Crazyblood — As Eras da Caçada
 
-Jogo incremental manual de fazenda de sangue, feito em TypeScript e Vite. A arte usa pixel art cartunizada de inspiração 32-bit e a interface se adapta a PC e celular.
+Incremental de captura em uma cidade 2D isométrica. Vampiros caçam humanos durante noites curtas, investem o sangue entre as caçadas e avançam por quatro eras: pré-história, medieval, contemporânea e futura.
 
 ## Jogar
 
@@ -9,27 +9,22 @@ npm install
 npm run dev
 ```
 
-Abra o endereço exibido pelo Vite. No PC, clique no fruto ou pressione Espaço. No celular, toque no fruto e use a navegação inferior.
+No PC, clique nos humanos. No celular, toque neles. Cada humano precisa de vários golpes. Corredores fogem com mais velocidade; guardas contra-atacam e reduzem a vida. O alvo dourado é o contrato da cidade. Quando a noite termina, sangue, capturas e contratos ficam salvos no navegador.
 
-## Objetivo
+Cada era contém cinco cidades. Capture o alvo nomeado e atinja a cota de cada cidade para avançar. Ao concluir a quinta, hiberne para a próxima era: a árvore e o sangue recomeçam, mas um eco permanente aumenta dano e duração das noites. O objetivo final é capturar a Imperatriz Solaris e 1.000 humanos em uma única noite na última cidade, sobrevivendo até o amanhecer.
 
-Restaure a Lua Rubra completando sete rituais. Cada ritual exige uma quantidade de sangue colhida **naquela rodada**, reinicia o sangue e as melhorias, e aumenta permanentemente a força dos toques em 1,8×. O sétimo ritual conclui a história; a colheita pode continuar depois.
+## Progressão
 
-Não existe produção automática ou progresso offline. As melhorias aumentam o sangue por toque, a chance e potência de críticos e o bônus de combo. Trinta colheitas carregam o Surto da Lua, ativado manualmente para multiplicar a colheita por 12 segundos.
+A árvore começa com dois poderes visíveis. Comprar um nó revela somente seus descendentes. Seus cinco caminhos ampliam a noite, a captura manual, os servos, o banco de sangue e os pulsos do eclipse. Servos e pulsos tornam as caçadas de multidões viáveis sem exigir milhares de cliques.
 
-O jogo salva automaticamente no navegador. O save antigo da versão de gerenciamento usa outra chave e permanece intacto.
+O cenário é desenhado como um mapa de losangos, edifícios e objetos por código; humanos, servos, luzes e atividade da cidade são animados no canvas. A arte gerada da catedral serve de fundo para a árvore. O jogo separa o save desta versão das versões anteriores.
 
-## Estrutura
-
-- `src/incremental/data.ts`: melhorias, rituais e formatação.
-- `src/incremental/game.ts`: regras e persistência.
-- `src/main.ts`: interface e interação.
-- `src/style.css`: HUD responsivo e efeitos visuais.
-- `public/assets/eclipse/`: arte nova da fazenda e do fruto.
-
-## Build
+## Desenvolvimento
 
 ```bash
 npm run typecheck
+npm run test:smoke
 npm run build
 ```
+
+O push para `main` dispara o deploy configurado em `wrangler.jsonc`.
