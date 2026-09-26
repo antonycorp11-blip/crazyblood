@@ -2,17 +2,25 @@
 // the props atlas, baked lighting — plus ambient animation. One cached canvas per city.
 import { W, H } from '../viewport'
 
-const files = { humans: 'humans.png', vampires: 'vampires.png', props: 'city-props.png', terrain: 'terrain.png', icons: 'skill-icons.png' } as const
+const files = {
+  humans: 'sprites/humans.png', vampires: 'sprites/vampires.png', props: 'sprites/city-props.png', terrain: 'sprites/terrain.png', icons: 'sprites/skill-icons.png',
+  humans0: 'sprites/humans-prehistoric.png', humans2: 'sprites/humans-contemporary.png', humans3: 'sprites/humans-future.png',
+  kit0: 'eras/era0.webp', kit1: 'eras/era1.webp', kit2: 'eras/era2.webp', kit3: 'eras/era3.webp',
+} as const
 export const sprites = {} as Record<keyof typeof files, HTMLImageElement>
 export const cache = new Map<number, HTMLCanvasElement>()
 for (const key of Object.keys(files) as Array<keyof typeof files>) {
   const img = new Image()
   img.onload = () => cache.clear()
-  img.src = '/assets/sprites/' + files[key]
+  img.src = '/assets/' + files[key]
   sprites[key] = img
 }
 export const ready = (img: HTMLImageElement) => img.complete && img.naturalWidth > 0
-export const humanAtlas = () => sprites.humans
+/** Humans dressed for the era (the medieval set is the original atlas). */
+export const humanAtlas = (era: number) => {
+  const a = [sprites.humans0, sprites.humans, sprites.humans2, sprites.humans3][era] ?? sprites.humans
+  return ready(a) ? a : sprites.humans
+}
 export const rect = (c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: string) => { c.fillStyle = color; c.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)) }
 export const poly = (c: CanvasRenderingContext2D, pts: number[][], color: string) => { c.fillStyle = color; c.beginPath(); c.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]); c.closePath(); c.fill() }
 export function glow(c: CanvasRenderingContext2D, x: number, y: number, r: number, color: string, alpha = 1) {
@@ -153,31 +161,42 @@ export function scenery(index: number) {
     }
   }
 
-  const prop = (variant: number, x: number, y: number, size: number) => {
-    if (!ready(sprites.props)) return
-    const h = size * 0.9
-    c.drawImage(sprites.props, variant * 160, era * 144, 160, 144, x - size / 2, y - h, size, h)
+  // era kit (painted art): 6 buildings + landmark in 256px cells, 8 small props in 128px cells
+  const kit = [sprites.kit0, sprites.kit1, sprites.kit2, sprites.kit3][era]
+  const hasKit = ready(kit)
+  const building = (v: number, x: number, y: number, size: number) => {
+    if (hasKit) c.drawImage(kit, v * 256, 0, 256, 256, x - size / 2, y - size, size, size)
+    else if (ready(sprites.props)) c.drawImage(sprites.props, (v % 2) * 160, era * 144, 160, 144, x - size / 2, y - size * 0.9, size, size * 0.9)
   }
-  const back = 9
+  const small = (v: number, x: number, y: number, size: number) => {
+    if (hasKit) c.drawImage(kit, v * 128, 256, 128, 128, x - size / 2, y - size, size, size)
+    else if (ready(sprites.props)) c.drawImage(sprites.props, 3 * 160, era * 144, 160, 144, x - size / 2, y - size * 0.9, size, size * 0.9)
+  }
+  // back row: a street of buildings along the horizon, shuffled per city
+  const order = [0, 1, 2, 3, 4, 5].sort(() => r() - 0.5)
+  const back = 8
   for (let k = 0; k < back; k++) {
-    const x = 40 + k * (W - 80) / (back - 1) + (r() - 0.5) * 20, y = HORIZON + 26 + (k % 2) * 10
-    const v = era === 0 ? (k % 3 === 0 ? 1 : 0) : (k % 3 === 1 ? 1 : 0)
-    prop(v, x, y, 150 + r() * 30)
-    lights.push({ x, y: y - 30, r: 60, color: p.light })
+    const x = 55 + k * (W - 110) / (back - 1) + (r() - 0.5) * 24, y = HORIZON + 36 + (k % 2) * 12
+    building(order[k % 6], x, y, 128 + r() * 34)
+    lights.push({ x, y: y - 40, r: 70, color: p.light })
   }
   const lx = [500, 250, 760, 500, 500][slot]
-  prop(2, lx, HORIZON + 70, 210)
-  lights.push({ x: lx, y: HORIZON + 30, r: 120, color: p.accent })
+  building(6, lx, HORIZON + 86, 190)
+  lights.push({ x: lx, y: HORIZON + 30, r: 130, color: p.accent })
+  // lamps / fires along the roads
+  const LAMP = [0, 3, 2, 1][era]
   for (const [i, j] of [[6, -2], [6, 2], [6, 6], [6, 10], [2, 5], [10, 5], [-2, 5], [14, 5]] as [number, number][]) {
     const { x, y } = tilePos(i, j)
     if (x < 20 || x > W - 20 || y < HORIZON + 20 || y > H - 10) continue
-    if (era === 0) lights.push({ x, y: y - 16, r: 90, color: '#ff8a3c', fire: true })
-    else { prop(3, x + 20, y + 4, era >= 2 ? 64 : 58); lights.push({ x: x + 20, y: y - 40, r: 95, color: p.light }) }
+    small(LAMP, x + 20, y + 6, era === 0 ? 46 : 60)
+    lights.push({ x: x + 20, y: y - (era === 0 ? 10 : 40), r: 95, color: era === 0 ? '#ff8a3c' : p.light, fire: era === 0 })
   }
-  for (let k = 0; k < 6; k++) {
-    const x = k < 3 ? 30 + k * 60 : W - 30 - (k - 3) * 60, y = HORIZON + 170 + (k % 3) * 110
-    if (y > H - 20) continue
-    prop(era === 0 ? 3 : k % 2, x, y, era === 0 ? 120 : 130)
+  // clutter on the edges of the square (kept away from the middle where the hunt happens)
+  const clutter = [0, 1, 2, 3, 4, 5, 6, 7].filter((v) => v !== LAMP)
+  for (let k = 0; k < 10; k++) {
+    const left = k % 2 === 0
+    const x = left ? 20 + r() * 110 : W - 20 - r() * 110, y = HORIZON + 90 + r() * (H - HORIZON - 110)
+    small(clutter[Math.floor(r() * clutter.length)], x, y, 48 + r() * 20)
   }
 
   c.globalCompositeOperation = 'lighter'

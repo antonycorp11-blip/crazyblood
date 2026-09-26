@@ -3,16 +3,20 @@
 //   node scripts/balance.mjs verbose    → every night
 import esbuild from 'esbuild'
 const memory = new Map(); globalThis.localStorage = { getItem: (k) => memory.get(k) || null, setItem: (k, v) => memory.set(k, v), removeItem: (k) => memory.delete(k) }
-let seed = 7; Math.random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296 }
+let seed = Number((process.argv.find((a) => a.startsWith("seed=")) || "seed=7").slice(5)); Math.random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296 }
 const build = await esbuild.build({ stdin: { contents: "export * from './src/game/hunt.ts'; export * from './src/game/save.ts'; export * from './src/game/progress.ts'; export * from './src/game/night-end.ts'; export * from './src/game/tree.ts'; export * from './src/game/data.ts'", resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'esm', write: false })
 const G = await import('data:text/javascript;base64,' + Buffer.from(build.outputFiles[0].contents).toString('base64'))
 const verbose = process.argv.includes('verbose')
+const early = process.argv.includes('early') // stop once the second era starts (the first ~15 minutes)
 const SHOP_SECONDS = 12 // time a player spends between nights
 
 function playNight(save) {
   const h = new G.Hunt(save, { width: 900, height: 500 })
+  h.bossLeft = 0
   let tapClock = 0
+  h.realTime = 0
   while (!h.ended) {
+    h.realTime += 0.05
     // aim at the densest spot, the boss, or loot about to expire
     const drop = h.drops.find((d) => !d.pulled && d.life < 2.5)
     let tx = h.auraX, ty = h.auraY
@@ -41,6 +45,8 @@ function playNight(save) {
     tapClock += 0.05
     if (tapClock > 0.25) { tapClock = 0; h.tap() }
     h.update(0.05)
+    if (h.boss) h.bossLeft = h.boss.hp / h.boss.maxHp
+    if (h.duel) h.duelSeen = (h.duelSeen ?? 0) + 0.05
   }
   return h
 }
@@ -57,15 +63,15 @@ const save = G.load()
 let clock = 0, nights = 0
 const cityStart = {}
 const lines = []
-while (!save.victory && nights < 450) {
+while (!save.victory && nights < 450 && !(early && save.city >= 8)) {
   const city = save.city
   cityStart[city] ??= { t: clock, n: nights }
   if (!save.pact && nights > 0) save.pact = G.rollPacts(3)[0]
   const h = playNight(save)
   const report = G.bankNight(save, h)
-  nights++; clock += h.duration + SHOP_SECONDS
+  nights++; clock += h.realTime + SHOP_SECONDS + 4 /* result screen + dice */ + (h.bossKilled ? 12 : 0) /* story chapter */
   shop(save)
-  if (verbose) console.log(`#${nights} c${city + 1} ${h.captures} cap, terror ${h.terror}/${h.terrorNeeded}, boss ${h.bossSpawned ? (h.bossKilled ? 'KILLED' : 'alive') : '-'}, +${G.fmtShort(report.total.blood)} blood, teeth ${Math.floor(report.total.teeth)}, shard ${Math.floor(report.total.shard)}, pure ${report.total.pure}, shinies ${h.shinies}, levels ${G.totalLevels(save)}, dmg ${G.fmtShort(h.damage)} x${h.tickRate.toFixed(1)}/s r${h.radius}, bossHp ${G.fmtShort(h.city.bossHp)}, humanHp ${G.fmtShort(h.humanHp)}`)
+  if (verbose) console.log(`#${nights} t=${(clock / 60).toFixed(1)}m c${city + 1} ${h.captures} cap, terror ${h.terror}/${h.terrorNeeded}, boss ${h.bossSpawned ? (h.bossKilled ? 'KILLED' : 'fled ' + Math.round(h.bossLeft * 100) + '% hits ' + h.playerHits) : '-'} duel ${Math.round(h.duelSeen ?? 0)}s, +${G.fmtShort(report.total.blood)} blood, teeth ${Math.floor(report.total.teeth)}, shard ${Math.floor(report.total.shard)}, pure ${report.total.pure}, shinies ${h.shinies}, levels ${G.totalLevels(save)}, dmg ${G.fmtShort(h.damage)} x${h.tickRate.toFixed(1)}/s r${h.radius}, bossHp ${G.fmtShort(h.city.bossHp)}, humanHp ${G.fmtShort(h.humanHp)}`)
   if (report.outcome !== 'none') {
     const s = cityStart[city]
     lines.push(`Cidade ${String(city + 1).padStart(2)} ${G.CITIES[city].name.padEnd(20)} ${String(nights - s.n).padStart(3)} noites  ${(Math.round((clock - s.t) / 6) / 10).toString().padStart(5)} min   total ${Math.round(clock / 60)} min   níveis ${G.totalLevels(save)}   ${report.outcome === 'era' ? '★ nova era' : ''}`)

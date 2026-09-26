@@ -1,5 +1,5 @@
 import './style.css'
-import { BOSS_WOLVES, CITIES, ERAS, PACTS, RESOURCES, type PactId, type Resource } from './game/data'
+import { CITIES, ERAS, PACTS, RESOURCES, type PactId, type Resource } from './game/data'
 import { Hunt, fmtShort } from './game/hunt'
 import { bankNight, type NightReport } from './game/night-end'
 import { affordableCount, buyNode, canBuy, isMaxed, isRevealed, priceOf, rollPacts } from './game/progress'
@@ -70,7 +70,7 @@ function dialogView() {
   const wolf = Math.max(0, dialog.ch - 1)
   const era = Math.min(3, Math.floor(save.city / 5))
   const portrait = who === 'conde' ? `<span class="pt pt-conde" style="--era:${era}"></span>`
-    : who === 'lobo' ? `<span class="pt pt-lobo" style="background-image:url(/assets/wolves/${BOSS_WOLVES[wolf][0]}.webp)"></span>`
+    : who === 'lobo' ? wolfPortrait(wolf, 'pt pt-lobo')
     : '<span class="pt pt-barto">🦇</span>'
   const name = who === 'lobo' ? CITIES[wolf].boss : SPEAKERS[who]
   return `<div class="dialog-veil ${dialog.i === 0 ? 'first' : ''}" data-action="dialog-next">
@@ -81,6 +81,8 @@ function dialogView() {
     <button class="dialog-skip" data-action="dialog-skip">pular ⏭</button>
   </div>`
 }
+/** Painted werewolf bust (20 in a 5×4 atlas, one per city). */
+const wolfPortrait = (i: number, cls: string) => `<span class="${cls} wolf-pt" style="--px:${(i % 5) * 25}%;--py:${Math.floor(i / 5) * 33.333}%"></span>`
 function endChapter() { save.story++; persist(save); dialog = null; render() }
 
 // ───────────────────────── HUNT
@@ -399,7 +401,7 @@ function frame(now: number) {
     ambience(hunt.duel ? 'boss' : 'hunt')
     for (const s of hunt.sounds) {
       sfx(s, hunt.combo)
-      if (s === 'boss') banner(`☠ DUELO<small>${hunt.city.boss} · desvie das marcas vermelhas</small>`, 'boss')
+      if (s === 'boss') banner(`${wolfPortrait(hunt.city.index, 'banner-pt')}☠ DUELO<small>${hunt.city.boss} · desvie das marcas vermelhas</small>`, 'boss')
       if (s === 'escape') banner(`${hunt.city.boss.toUpperCase()} FUGIU`, 'boss')
       if (s === 'hurt') navigator.vibrate?.(60)
       if (s === 'bosskill') banner('CHEFE DERROTADO!', 'gold')

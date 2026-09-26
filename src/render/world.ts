@@ -107,7 +107,7 @@ function bubbles(c: CanvasRenderingContext2D, hunt: Hunt) {
 
 function human(c: CanvasRenderingContext2D, hunt: Hunt, h: Human, t: number) {
   if (h.kind === 'boss') return werewolf(c, hunt, h, t)
-  const atlas = humanAtlas()
+  const atlas = humanAtlas(hunt.city.era)
   if (!ready(atlas)) return
   const scale = 1
   const x = Math.round(h.x), y = Math.round(h.y)

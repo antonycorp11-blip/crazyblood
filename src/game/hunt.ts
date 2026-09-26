@@ -92,7 +92,7 @@ export class Hunt {
     this.stats = computeStats(save.levels)
     this.pact = save.pact
     if (viewport) this.setViewport(viewport.width, viewport.height)
-    this.duration = 12 + this.stats.nightTime + (this.pact === 'longnight' ? 6 : 0)
+    this.duration = 15 + this.stats.nightTime + (this.pact === 'longnight' ? 6 : 0)
     for (let i = 0; i < 10 + this.city.slot * 2; i++) this.spawn()
   }
 
@@ -123,13 +123,14 @@ export class Hunt {
   }
 
   // ───────── spawning
-  spawn(kind?: Kind) {
+  private gaveShiny = false
+  spawn(kind?: Kind, forceShiny = false) {
     if (!kind && this.humans.length >= this.maxPop) return
     const b = this.bounds
     const r = Math.random()
     const k: Kind = kind ?? (r < this.city.guardShare ? 'guard' : r < 0.26 ? 'runner' : r < 0.33 ? 'rare' : 'common')
     const shinyChance = (0.004 + this.stats.shinyChance / 100) * (this.pact === 'goldfever' ? 4 : 1)
-    const shiny = k !== 'boss' && Math.random() < shinyChance
+    const shiny = k !== 'boss' && (forceShiny || Math.random() < shinyChance)
     const base = k === 'boss' ? this.city.bossHp * (1 - Math.min(75, this.stats.weaken) / 100) : this.humanHp * (k === 'guard' ? 3 : k === 'rare' ? 1.6 : k === 'runner' ? 0.8 : 1)
     const hp = base * (shiny ? 2.5 : 1)
     const fromEdge = this.elapsed > 0.2 && k !== 'boss'
@@ -207,6 +208,8 @@ export class Hunt {
     this.vampireY += (this.auraY + 26 - this.vampireY) * Math.min(1, dt * 8)
 
     if (this.duel) this.updateDuel(dt)
+    // a guaranteed first shiny on the second night: the first jackpot comes early
+    if (!this.gaveShiny && this.save.shinies === 0 && this.save.nights >= 1 && this.elapsed > 4 && !this.duel) { this.gaveShiny = true; this.spawn('rare', true) }
 
     // aura ticks
     if (this.auraOn) {
@@ -462,13 +465,13 @@ export class Hunt {
     if (this.invuln > 0 || !this.duel) return
     this.invuln = 1
     this.playerHits++
-    this.duel.timer -= 3
+    this.duel.timer -= 2
     this.combo = Math.floor(this.combo / 2)
     this.shake = 14; this.flashRed = 1; this.hitStop = 0.08
     const dx = this.auraX - fromX, dy = this.auraY + 26 - fromY, d = Math.hypot(dx, dy) || 1, b = this.bounds
     this.auraX = clamp(this.auraX + dx / d * 90, b.left, b.right); this.auraY = clamp(this.auraY + dy / d * 60, b.top - 60, b.bottom)
     this.targetX = this.auraX; this.targetY = this.auraY
-    this.float(this.auraX, this.auraY - 50, '-3s', '#ff4060', 26)
+    this.float(this.auraX, this.auraY - 50, '-2s', '#ff4060', 26)
     if (this.boss) this.say(this.boss, pick(BOSS_HIT), 1.2)
     this.burst(this.auraX, this.auraY, '#ff2a4a', 16)
     this.sounds.push('hurt')

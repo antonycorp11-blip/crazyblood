@@ -324,7 +324,7 @@ button:disabled { cursor: default }
 .dialog small { display: block; margin-top: 6px; font: 700 11px var(--body); color: var(--muted); animation: hintpulse 1.6s ease-in-out infinite }
 .pt { flex: none; width: 84px; height: 84px; border-radius: 14px; border: 3px solid #b8893f; background-color: #120913; background-repeat: no-repeat; image-rendering: pixelated; box-shadow: 0 4px 10px #000a inset }
 .pt-conde { background-image: url(/assets/sprites/vampires.png); background-size: 600% 400%; background-position: 0 calc(var(--era) * 33.333%) }
-.pt-lobo { background-size: 1600% 110%; background-position: 0 10%; border-color: #ff3a5c }
+.pt-lobo { border-color: #ff3a5c }
 .pt-barto { display: grid; place-items: center; font-size: 46px; border-color: #6fb8e8; animation: bartofly 1.2s ease-in-out infinite }
 @keyframes bartofly { 50% { transform: translateY(-4px) rotate(-4deg) } }
 .dialog-skip { position: absolute; top: calc(12px + var(--safe-t)); right: calc(12px + var(--safe-r)); padding: 8px 14px; border-radius: 20px; border: 2px solid #b8893f88; background: #120913cc; color: var(--muted); font: 800 12px var(--body); cursor: pointer }
@@ -332,3 +332,6 @@ button:disabled { cursor: default }
 .barto-ico { font-style: normal; font-size: 18px; flex: none }
 @media (max-width: 640px) { .pt { width: 66px; height: 66px } .dialog p { font-size: 14.5px } .pt-barto { font-size: 36px } }
 @media (max-height: 520px) { .barto-tip { display: none } .dialog { padding: 10px 14px } .pt { width: 60px; height: 60px } .dialog p { font-size: 14px } }
+
+.wolf-pt { background-image: url(/assets/wolves/portraits.webp); background-size: 500% 400%; background-position: var(--px) var(--py); background-repeat: no-repeat; image-rendering: auto }
+.banner-pt { display: block; width: clamp(110px, 22vw, 180px); height: clamp(110px, 22vw, 180px); margin: 0 auto -6px; border-radius: 50%; border: 4px solid #ff3a5c; background-color: #1a0610; box-shadow: 0 0 30px #ff3a5caa }

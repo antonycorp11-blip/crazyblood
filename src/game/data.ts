@@ -21,6 +21,8 @@ export const BOSS_WOLVES: Array<[string, string | null, number]> = [
 
 export const CITY_COUNT = 20
 /** Difficulty curve: human HP and blood value per city (index 0-19). */
+/** The first era is tuned to flow fast (a new city every ~2-3 nights): softer humans and werewolves. */
+export const EARLY_EASE: Array<{ hp: number; boss: number }> = [{ hp: 0.67, boss: 0.4 }, { hp: 0.6, boss: 0.5 }, { hp: 0.55, boss: 0.32 }, { hp: 0.55, boss: 0.19 }, { hp: 0.7, boss: 0.09 }, { hp: 0.85, boss: 0.18 }, { hp: 0.9, boss: 0.55 }, { hp: 0.95, boss: 0.8 }]
 export const CITY_BALANCE = { hpGrowth: 2.25, bloodGrowth: 1.35, bossBase: 220, bossPerCity: 40, bossExtra: 1.7 }
 
 export interface City {
@@ -39,13 +41,15 @@ export interface City {
 
 export const CITIES: City[] = ERAS.flatMap((era, e) => era.cities.map(([name, boss], slot) => {
   const k = e * 5 + slot
-  const humanHp = Math.round(3 * Math.pow(CITY_BALANCE.hpGrowth, k))
+  const baseHp = 3 * Math.pow(CITY_BALANCE.hpGrowth, k)
+  const ease = EARLY_EASE[k] ?? { hp: 1, boss: 1 }
+  const humanHp = Math.max(2, Math.round(baseHp * ease.hp))
   return {
     index: k, era: e, slot, name, boss,
     humanHp,
     blood: Math.round(Math.pow(CITY_BALANCE.bloodGrowth, k) * 10) / 10,
-    terror: 30 + k * 9,
-    bossHp: humanHp * (CITY_BALANCE.bossBase + k * CITY_BALANCE.bossPerCity) * Math.pow(CITY_BALANCE.bossExtra, k),
+    terror: k < 5 ? 20 + k * 7 : 30 + k * 9,
+    bossHp: baseHp * (CITY_BALANCE.bossBase + k * CITY_BALANCE.bossPerCity) * Math.pow(CITY_BALANCE.bossExtra, k) * ease.boss,
     guardShare: Math.min(0.28, 0.02 + k * 0.018),
   }
 }))
