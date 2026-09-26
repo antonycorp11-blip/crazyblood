@@ -12,7 +12,7 @@ const s=(id:string,name:string,branch:Branch,icon:string,description:string,effe
 export const SKILLS:Skill[]=[
   s('moon','Lua tardia','night','☾','O amanhecer demora a chegar.','+7 s de noite',7,28,1.78,0,0),
   s('mist','Passos na névoa','night','◈','A névoa atrasa a fuga dos humanos.','Humanos 8% mais lentos',5,55,1.95,0,1,'moon'),
-  s('stalk','Sombra paciente','night','✧','Alvos raros permanecem por mais tempo.','+6 s para alvos especiais',4,110,2.1,0,2,'mist'),
+  s('stalk','Sombra paciente','night','✧','O alvo do contrato demora mais a escapar.','+6 s para o alvo',4,110,2.1,0,2,'mist'),
   s('vigor','Sangue antigo','night','♥','Seu corpo aguenta mais contra-ataques.','+2 de vida',6,155,1.95,0,3,'stalk'),
   s('dusk','Crepúsculo eterno','night','☀','Estenda o último instante da noite.','+15 s de noite',3,420,2.6,0,4,'vigor'),
   s('immortal','Noite sem fim','night','✺','A lua resiste ao amanhecer.','+35 s de noite',2,3500,3,0,5,'dusk'),
@@ -60,14 +60,14 @@ export const ERAS=[
 export type District={name:string;tag:string;era:number;city:number;population:number;rate:number;baseHp:number;blood:number;target:string;targetType:'runner'|'hunter'|'rare';targetHp:number;targetReward:number;quota:number;intro:string}
 export const DISTRICTS:District[]=ERAS.flatMap((era,eraIndex)=>era.cities.map((city,cityIndex)=>({
   name:city[0],tag:era.name,era:eraIndex,city:cityIndex,
-  population:[25,45,75,125,210][cityIndex],
-  rate:[1.3,2.8,5.2,9,17][cityIndex]*(1+eraIndex*.12),
-  baseHp:[2,3,4,5,6][cityIndex]+eraIndex,
-  blood:Math.round([4,6,9,13,18][cityIndex]*(1+eraIndex*.25)),
+  population:[38,70,115,180,280][cityIndex],
+  rate:[1.75,3.6,6.2,11,18.5][cityIndex]*(1+eraIndex*.13),
+  baseHp:[2,4,6,9,13][cityIndex]+eraIndex,
+  blood:Math.round([4,7,11,17,25][cityIndex]*(1+eraIndex*.28)),
   target:city[1],targetType:city[2],
-  targetHp:[10,19,28,46,90][cityIndex]+eraIndex*8,
-  targetReward:Math.round([90,210,480,1100,3000][cityIndex]*(1+eraIndex*.3)),
-  quota:[14,35,80,160,300][cityIndex],
-  intro:eraIndex===3&&cityIndex===4?'Objetivo final: capture a Imperatriz Solaris e 1.000 humanos na mesma noite; sobreviva até o amanhecer.':'Capture '+city[1]+' e alcance a meta de '+[14,35,80,160,300][cityIndex]+' capturas para avançar.',
+  targetHp:[12,26,45,80,140][cityIndex]+eraIndex*10,
+  targetReward:Math.round([55,130,300,650,1300][cityIndex]*(1+eraIndex*.3)),
+  quota:[25,50,90,160,300][cityIndex],
+  intro:eraIndex===3&&cityIndex===4?'Objetivo final: capture a Imperatriz Solaris e 1.000 humanos na mesma noite; sobreviva até o amanhecer.':'Capture '+city[1]+' e '+[25,50,90,160,300][cityIndex]+' humanos na mesma noite. Sobreviva até o amanhecer para abrir a próxima cidade.',
 })))
 export const skillCost=(skill:Skill,level:number)=>Math.round(skill.cost*Math.pow(skill.scale,level))
