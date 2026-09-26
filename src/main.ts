@@ -7,7 +7,7 @@ import { level, load, persist, resetSave, type Save } from './game/save'
 import { NODES, NODE_BY_ID, computeStats, describe, type TreeNode } from './game/tree'
 import { drawHunt } from './render/world'
 import { drawLair, lairState } from './render/lair'
-import { camera } from './viewport'
+import { camera, huntCamera } from './viewport'
 import { ambience, setIntensity, sfx, setMuted, unlockAudio } from './sound'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
@@ -81,8 +81,12 @@ function huntView() {
 function updateHud() {
   if (!hunt) return
   const set = (id: string, v: string) => { const e = document.getElementById(id); if (e && e.textContent !== v) e.textContent = v }
-  set('time', String(Math.ceil(hunt.remaining)))
-  const arc = document.getElementById('moon-arc'); if (arc) arc.style.strokeDashoffset = String(170 * (1 - hunt.remaining / hunt.duration))
+  // during the duel the moon clock becomes the werewolf's escape timer
+  const d = hunt.duel
+  set('time', String(Math.ceil(d ? Math.max(0, d.timer) : hunt.remaining)))
+  document.querySelector('.moon-clock')?.classList.toggle('duel', !!d)
+  document.querySelector('.game')?.classList.toggle('in-duel', !!d)
+  const arc = document.getElementById('moon-arc'); if (arc) arc.style.strokeDashoffset = String(170 * (1 - (d ? Math.max(0, d.timer) / d.max : hunt.remaining / hunt.duration)))
   set('caps', fmt(hunt.captures))
   const combo = document.getElementById('combo')
   if (combo) { const txt = hunt.combo >= 5 ? `×${hunt.combo} COMBO` : ''; if (combo.textContent !== txt) { combo.textContent = txt; combo.classList.remove('bump'); void combo.offsetWidth; combo.classList.add('bump') } }
@@ -96,6 +100,8 @@ function updateHud() {
       bar.classList.add('boss-mode')
       fill.style.width = (100 * Math.max(0, hunt.boss.hp / hunt.boss.maxHp)) + '%'
       set('terror-label', `☠ ${hunt.city.boss.toUpperCase()} · ${fmt(hunt.boss.hp)}`)
+    } else if (hunt.bossEscaped) {
+      bar.classList.remove('boss-mode'); fill.style.width = '0%'; set('terror-label', `☠ ${hunt.city.boss.toUpperCase()} FUGIU`)
     } else if (hunt.bossKilled) {
       bar.classList.remove('boss-mode'); bar.classList.add('boss-dead'); fill.style.width = '100%'; set('terror-label', '☠ CHEFE DERROTADO')
     } else {
@@ -115,7 +121,7 @@ function banner(text: string, kind = '') {
 function resultView(r: NightReport) {
   const h = hunt!
   const title = r.outcome === 'victory' ? 'ECLIPSE TOTAL' : h.bossKilled ? 'CHEFE DERROTADO' : 'AMANHECER'
-  const sub = r.outcome === 'era' ? `Nova era desperta: <b>${ERAS[CITIES[save.city].era].name}</b> · Eco +1 (×1,3 dano e sangue)` : r.outcome === 'city' ? `${h.city.name} caiu. Próxima cidade: <b>${city().name}</b>` : r.outcome === 'victory' ? 'A história inteira pertence aos vampiros.' : h.bossSpawned ? `${h.city.boss} escapou ao amanhecer. Fique mais forte e volte.` : `O chefe surge com <b>${h.terrorNeeded}</b> capturas numa noite.`
+  const sub = r.outcome === 'era' ? `Nova era desperta: <b>${ERAS[CITIES[save.city].era].name}</b> · Eco +1 (×1,3 dano e sangue)` : r.outcome === 'city' ? `${h.city.name} caiu. Próxima cidade: <b>${city().name}</b>` : r.outcome === 'victory' ? 'A história inteira pertence aos vampiros.' : h.bossSpawned ? `${h.city.boss} fugiu do duelo. Fique mais forte e volte.` : `O chefe surge com <b>${h.terrorNeeded}</b> capturas numa noite.`
   const lootRows = (['blood', 'teeth', 'shard', 'pure'] as Resource[]).filter((k) => r.total[k] >= 1).map((k) => `<div class="loot-row">${resIcon(k)}<span>${RESOURCES[k].name}</span><b class="count" data-to="${Math.floor(r.total[k])}">0</b></div>`).join('')
   const dice = r.dice.faces.map((f, i) => `<div class="die rolling" style="--d:${i * 0.12}s" data-face="${f}">${pips(1 + ((f + i) % 6))}</div>`).join('')
   const pacts = offeredPacts.map((p) => `<button class="pact-card" data-pact="${p}">${skillIcon(PACTS[p].icon)}<b>${PACTS[p].name}</b><span>${PACTS[p].text}</span></button>`).join('')
@@ -194,7 +200,7 @@ function nodeSheet() {
 // ───────────────────────── render + canvas
 function render() {
   app.innerHTML = `<div class="game screen-${screen}"><canvas id="stage"></canvas><div class="ui">${screen === 'lair' ? lairView() : screen === 'hunt' ? huntView() : treeView()}</div>${report ? resultView(report) : ''}</div>`
-  ambience(screen === 'hunt' && !report ? 'hunt' : 'lair')
+  ambience(screen === 'hunt' && !report ? (hunt?.duel ? 'boss' : 'hunt') : 'lair')
   if (report) animateResult()
   if (screen === 'tree') bindTree()
   paint(performance.now() / 1000)
@@ -216,7 +222,7 @@ function paint(t: number) {
 
 function toWorld(clientX: number, clientY: number) {
   const canvas = document.querySelector<HTMLCanvasElement>('#stage')!
-  const r = canvas.getBoundingClientRect(), cam = camera(r.width, r.height)
+  const r = canvas.getBoundingClientRect(), cam = screen === 'hunt' ? huntCamera(r.width, r.height) : camera(r.width, r.height)
   return { x: (clientX - r.left - cam.x) / cam.scale, y: (clientY - r.top - cam.y) / cam.scale }
 }
 
@@ -363,9 +369,12 @@ function frame(now: number) {
   if (screen === 'hunt' && hunt && !report) {
     hunt.update(dt)
     setIntensity(hunt.elapsed / hunt.duration)
+    ambience(hunt.duel ? 'boss' : 'hunt')
     for (const s of hunt.sounds) {
       sfx(s, hunt.combo)
-      if (s === 'boss') banner(`☠ ${hunt.city.boss.toUpperCase()} APARECEU`, 'boss')
+      if (s === 'boss') banner(`☠ DUELO<small>${hunt.city.boss} · desvie das marcas vermelhas</small>`, 'boss')
+      if (s === 'escape') banner(`${hunt.city.boss.toUpperCase()} FUGIU`, 'boss')
+      if (s === 'hurt') navigator.vibrate?.(60)
       if (s === 'bosskill') banner('CHEFE DERROTADO!', 'gold')
       if (s === 'shiny') banner('✦ HUMANO SHINY ✦', 'gold')
       if (s === 'combo') banner(['', 'FRENESI', 'MASSACRE', 'CARNIFICINA', 'BANQUETE', 'APOCALIPSE', 'ECLIPSE'][[10, 25, 50, 100, 200, 400].indexOf(hunt.comboMark) + 1] + ` ×${hunt.comboMark}`, 'combo')
@@ -383,4 +392,4 @@ render()
 requestAnimationFrame(frame)
 
 // Dev-only handle for testing from the console (never in production builds).
-if (import.meta.env.DEV) (window as unknown as { __cb: unknown }).__cb = { get save() { return save }, render, persist: () => persist(save) }
+if (import.meta.env.DEV) (window as unknown as { __cb: unknown }).__cb = { get save() { return save }, get hunt() { return hunt }, render, persist: () => persist(save) }

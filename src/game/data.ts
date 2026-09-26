@@ -2,14 +2,22 @@
 
 export const ERAS = [
   { name: 'Pré-história', years: '30.000 a.C.', color: '#e4a66a', cities: [
-    ['Clã da Lua', 'Nara, a batedora'], ['Vale das Cinzas', 'Grom, o caçador'], ['Rio dos Ossos', 'Uma, a curandeira'], ['Colinas de Fogo', 'Kara, a guerreira'], ['Grande Caverna', 'Tarek, o chefe']] },
+    ['Clã da Lua', 'Garra Cinzenta'], ['Vale das Cinzas', 'Uivo Rubro'], ['Rio dos Ossos', 'Presa de Pedra'], ['Colinas de Fogo', 'Salto Negro'], ['Grande Caverna', 'Alfa Fenrik']] },
   { name: 'Era Medieval', years: 'ano 1180', color: '#c289db', cities: [
-    ['Vila das Lanternas', 'Mara, a mensageira'], ['Mercado de Bruma', 'Dario, o vigia'], ['Cidade Velha', 'Iris, a alquimista'], ['Fortaleza Rubra', 'Capitão Solano'], ['Capital do Sol', 'Regente Aurora']] },
+    ['Vila das Lanternas', 'Lobo da Bruma'], ['Mercado de Bruma', 'Cavador de Tumbas'], ['Cidade Velha', 'Xamã Ulric'], ['Fortaleza Rubra', 'Lorde Couraça'], ['Capital do Sol', 'Alfa Varg']] },
   { name: 'Era Contemporânea', years: 'ano 2026', color: '#71ccef', cities: [
-    ['Bairro Neon', 'Lia, a entregadora'], ['Terminal Central', 'Raul, o policial'], ['Distrito Industrial', 'Dra. Vega'], ['Centro Financeiro', 'Chefe Atlas'], ['Metrópole Solar', 'Prefeita Helia']] },
+    ['Bairro Neon', 'Caçador Neon'], ['Terminal Central', 'Uivador da Tempestade'], ['Distrito Industrial', 'Brutamontes de Aço'], ['Centro Financeiro', 'Couraça Blindada'], ['Metrópole Solar', 'Mãe da Matilha']] },
   { name: 'Era Futura', years: 'ano 2280', color: '#8ce7e4', cities: [
-    ['Colônia Prisma', 'AX-7, a exploradora'], ['Porto Orbital', 'Sentinela Voss'], ['Núcleo Sintético', 'Dra. Nyx'], ['Bastião Quântico', 'Comandante Zero'], ['Nova Aurora', 'Imperatriz Solaris']] },
+    ['Colônia Prisma', 'Saltador Prisma'], ['Porto Orbital', 'Xamã Sintético'], ['Núcleo Sintético', 'Tempestade Quântica'], ['Bastião Quântico', 'Alfa Zero'], ['Nova Aurora', 'Mãe do Eclipse']] },
 ] as const
+
+/** Every boss is a werewolf — the vampires' natural enemy. Sheet from /assets/wolves, optional tint, size. */
+export const BOSS_WOLVES: Array<[string, string | null, number]> = [
+  ['hunter', null, 1], ['howler', null, 1.05], ['brute', null, 1.1], ['leaper', null, 1.1], ['alpha', null, 1.2],
+  ['scout', '#8a5cff', 1.05], ['digger', null, 1.1], ['shaman', null, 1.1], ['armored', null, 1.15], ['alpha', '#b04cff', 1.25],
+  ['hunter', '#3ad0ff', 1.1], ['storm', null, 1.15], ['brute', '#6fa8ff', 1.2], ['armored', '#3ad0ff', 1.25], ['mother', null, 1.2],
+  ['leaper', '#39ffe0', 1.2], ['shaman', '#39ffe0', 1.2], ['storm', '#8cf7ff', 1.25], ['alpha', '#39ffe0', 1.3], ['mother', '#ff2a4a', 1.35],
+]
 
 export const CITY_COUNT = 20
 /** Difficulty curve: human HP and blood value per city (index 0-19). */

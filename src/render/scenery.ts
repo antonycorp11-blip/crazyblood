@@ -36,12 +36,12 @@ export function drawSky(c: CanvasRenderingContext2D, era: number, progress: numb
   const p = PAL[era]
   const g = c.createLinearGradient(0, 0, 0, HORIZON + 20)
   g.addColorStop(0, p.sky[0]); g.addColorStop(0.6, p.sky[1]); g.addColorStop(1, p.sky[2])
-  c.fillStyle = g; c.fillRect(0, 0, W, HORIZON + 20)
+  c.fillStyle = g; c.fillRect(-W, -H, 3 * W, H + HORIZON + 20)
   if (progress > 0.55) {
     const k = (progress - 0.55) / 0.45
     const d = c.createLinearGradient(0, 0, 0, HORIZON + 20)
     d.addColorStop(0, `rgba(90,110,170,${k * 0.5})`); d.addColorStop(1, `rgba(255,170,110,${k * 0.85})`)
-    c.fillStyle = d; c.fillRect(0, 0, W, HORIZON + 20)
+    c.fillStyle = d; c.fillRect(-W, -H, 3 * W, H + HORIZON + 20)
   }
   const r = rng(era * 97 + 3)
   for (let i = 0; i < 90; i++) {

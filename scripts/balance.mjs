@@ -16,7 +16,15 @@ function playNight(save) {
     // aim at the densest spot, the boss, or loot about to expire
     const drop = h.drops.find((d) => !d.pulled && d.life < 2.5)
     let tx = h.auraX, ty = h.auraY
-    if (h.boss && Math.random() < 0.6) { tx = h.boss.x; ty = h.boss.y - 26 }
+    const a = h.duel?.attack
+    if (a && a.botDodge === undefined) a.botDodge = Math.random() < 0.75 // players miss some dodges
+    if (a && a.botDodge && a.t > 0.3 && !a.done) {
+      // dodge: step out of the slam circle / sideways off the lunge line
+      const fx = h.auraX, fy = h.auraY + 26
+      if (a.kind === 'slam') { const dx = fx - a.x, dy = fy - a.y, d = Math.hypot(dx, dy) || 1; tx = a.x + dx / d * (a.r + 60); ty = a.y + dy / d * (a.r + 60) - 26 }
+      else { const side = (fx - a.x) * a.dy - (fy - a.y) * a.dx >= 0 ? 1 : -1; tx = fx + a.dy * side * 120; ty = fy - a.dx * side * 120 - 26 }
+    } else if (h.duel) { tx = h.boss.x + 30; ty = h.boss.y - 50 }
+    else if (h.boss && Math.random() < 0.6) { tx = h.boss.x; ty = h.boss.y - 26 }
     else if (drop && Math.random() < 0.5) { tx = drop.x; ty = drop.y - 20 }
     else if (h.humans.length) {
       let best = h.humans[0], bestN = -1

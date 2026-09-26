@@ -2,13 +2,19 @@
 import { CITIES, type City, type PactId, type Resource } from './data'
 import { computeStats, type Stats } from './tree'
 import type { Save } from './save'
-import { camera } from '../viewport'
+import { controlsReserve, huntCamera } from '../viewport'
 
 export type Kind = 'common' | 'runner' | 'guard' | 'rare' | 'boss'
 export interface Human {
   id: number; x: number; y: number; vx: number; vy: number; hp: number; maxHp: number
   kind: Kind; shiny: boolean; flash: number; panic: number; life: number
+  /** Humans scatter out of the city when the werewolf arrives. */
+  flee?: boolean
 }
+/** A telegraphed werewolf attack: a slam circle on the ground or a lunge along a line. */
+export interface BossAttack { kind: 'slam' | 'lunge'; x: number; y: number; dx: number; dy: number; len: number; r: number; windup: number; t: number; done: boolean; traveled: number }
+/** The boss duel: the night clock stops, the city empties and it's you against the werewolf. */
+export interface Duel { phase: 'intro' | 'fight'; t: number; timer: number; max: number; cd: number; exposed: number; howl: number; attack: BossAttack | null; count: number }
 export type DropType = 'vial' | 'teeth' | 'shard' | 'pure'
 export interface Drop { id: number; x: number; y: number; z: number; vz: number; type: DropType; amount: number; life: number; pulled: boolean }
 export interface FloatText { x: number; y: number; vy: number; life: number; text: string; color: string; size: number }
@@ -54,6 +60,11 @@ export class Hunt {
   boss: Human | null = null
   bossSpawned = false
   bossKilled = false
+  bossEscaped = false
+  duel: Duel | null = null
+  /** Vampire invulnerability after being hit by the werewolf. */
+  invuln = 0
+  playerHits = 0
   ended = false
   shake = 0
   flashRed = 0
@@ -101,8 +112,9 @@ export class Hunt {
   get humanHp() { return Math.max(1, this.city.humanHp * (1 - Math.min(75, this.stats.weaken) / 100)) }
 
   setViewport(width: number, height: number) {
-    const v = camera(width, Math.max(1, height))
-    this.bounds = { left: Math.max(60, v.left + 30), right: Math.min(940, v.right - 30), top: Math.max(185, v.top + 70), bottom: Math.min(500, v.bottom - 30) }
+    const v = huntCamera(width, Math.max(1, height))
+    const reserve = controlsReserve(width, height) / v.scale
+    this.bounds = { left: Math.max(60, v.left + 30), right: Math.min(940, v.right - 30), top: Math.max(185, v.top + 70), bottom: Math.min(500, v.bottom - 30 - reserve) }
   }
 
   // ───────── spawning
@@ -119,7 +131,7 @@ export class Hunt {
     const x = fromEdge ? (Math.random() < 0.5 ? b.left : b.right) : rand(b.left, b.right)
     const y = rand(b.top, b.bottom)
     const h: Human = { id: NEXT++, x, y, vx: rand(-20, 20), vy: rand(-12, 12), hp, maxHp: hp, kind: k, shiny, flash: 0, panic: 0, life: 0 }
-    if (k === 'boss') { h.x = (b.left + b.right) / 2; h.y = b.top + 20; this.boss = h }
+    if (k === 'boss') { h.x = (b.left + b.right) / 2; h.y = b.top - 60; h.vx = 0; h.vy = 1; this.boss = h }
     this.humans.push(h)
     if (shiny) this.sounds.push('shiny')
   }
@@ -138,7 +150,7 @@ export class Hunt {
     const r = 26 + this.stats.biteRadius
     const dmg = this.damage * (3 + this.stats.biteDmg)
     let hit = false
-    for (const h of [...this.humans]) if (Math.hypot(h.x - x, h.y - 28 - y) < r + 16) { this.hit(h, dmg, true); hit = true }
+    for (const h of [...this.humans]) if (!h.flee && Math.hypot(h.x - x, h.y - (h.kind === 'boss' ? 50 : 28) - y) < r + (h.kind === 'boss' ? 50 : 16)) { this.hit(h, dmg, true); hit = true }
     this.fx.push({ x, y, row: 1, age: 0, duration: 0.35, size: 70 })
     if (hit) this.sounds.push('bite')
   }
@@ -161,18 +173,18 @@ export class Hunt {
     }
     this.souls = this.souls.filter((s) => s.life > 0).slice(-80)
     if (this.hitStop > 0) { this.hitStop -= dt; dt *= 0.15 }
-    this.elapsed += dt
+    if (!this.duel) this.elapsed += dt
+    this.invuln = Math.max(0, this.invuln - dt)
     this.biteCooldown = Math.max(0, this.biteCooldown - dt)
     this.bite = Math.max(0, this.bite - dt)
     this.shake = Math.max(0, this.shake - dt * 18)
     this.flashRed = Math.max(0, this.flashRed - dt * 2)
-    this.comboClock -= dt
-    if (this.comboClock <= 0) this.combo = 0
+    if (!this.duel) { this.comboClock -= dt; if (this.comboClock <= 0) this.combo = 0 }
 
     // waves: the city fills up as the night goes on
     const wave = 1 + 1.6 * (this.elapsed / this.duration)
     const rate = (2.4 + this.city.slot * 0.35) * (1 + this.stats.spawnPct / 100) * wave * (this.pact === 'horde' ? 1.7 : 1)
-    this.spawnClock += dt
+    if (!this.duel) this.spawnClock += dt
     while (this.spawnClock > 1 / rate) { this.spawnClock -= 1 / rate; this.spawn() }
 
     // the aura (the vampire's hunting spot) travels at moveSpeed toward the cursor or along the joystick
@@ -189,6 +201,8 @@ export class Hunt {
     this.vampireX += (this.auraX - this.vampireX) * Math.min(1, dt * 8)
     this.vampireY += (this.auraY + 26 - this.vampireY) * Math.min(1, dt * 8)
 
+    if (this.duel) this.updateDuel(dt)
+
     // aura ticks
     if (this.auraOn) {
       this.tickClock += dt
@@ -197,7 +211,7 @@ export class Hunt {
         this.tickClock -= gap
         const r = this.radius
         let hits = 0
-        for (const h of [...this.humans]) if (Math.hypot(h.x - this.auraX, (h.y - 26) - this.auraY) < r + 12) { this.hit(h, this.damage, false); hits++ }
+        for (const h of [...this.humans]) if (!h.flee && Math.hypot(h.x - this.auraX, (h.y - (h.kind === 'boss' ? 50 : 26)) - this.auraY) < r + (h.kind === 'boss' ? 45 : 12)) { this.hit(h, this.damage, false); hits++ }
         if (hits) this.rings.push({ x: this.auraX, y: this.auraY, r: r * 0.5, max: r, life: 0.25, color: '#ff5a74', width: 2 })
       }
     }
@@ -209,7 +223,7 @@ export class Hunt {
       const gap = 0.9 / (1 + this.stats.batRate / 100) / bats
       while (this.batClock >= gap) {
         this.batClock -= gap
-        const target = this.boss && Math.random() < 0.35 ? this.boss : this.humans[Math.floor(Math.random() * this.humans.length)]
+        const target = this.boss && (this.duel || Math.random() < 0.35) ? this.boss : this.humans[Math.floor(Math.random() * this.humans.length)]
         if (target) {
           this.hit(target, this.damage * 0.6 * (1 + this.stats.batDmg / 100) * (target.kind === 'boss' ? 0.5 : 1), false, '#6be7d5')
           this.fx.push({ x: target.x, y: target.y - 30, row: 4, age: 0, duration: 0.4, size: 40 })
@@ -221,10 +235,12 @@ export class Hunt {
     const b = this.bounds
     for (const h of this.humans) {
       h.life += dt; h.flash = Math.max(0, h.flash - dt); h.panic = Math.max(0, h.panic - dt)
+      if (h.kind === 'boss') continue // the duel moves the werewolf
+      if (h.flee) { h.x += h.vx * dt; h.y += h.vy * dt; continue }
       if (h.shiny && Math.random() < dt * 14) this.sparks.push({ x: h.x + rand(-12, 12), y: h.y - rand(10, 50), vx: rand(-10, 10), vy: rand(-40, -10), life: 0.6, color: '#ffe38a', size: 2 })
       const dx = h.x - this.auraX, dy = h.y - 26 - this.auraY, d = Math.hypot(dx, dy)
-      if (this.auraOn && d < this.radius * 2.2 && h.kind !== 'boss') { h.vx += (dx / (d || 1)) * 60 * dt; h.vy += (dy / (d || 1)) * 40 * dt }
-      const speed = (h.kind === 'runner' ? 1.9 : h.kind === 'guard' ? 0.7 : h.kind === 'boss' ? 0.55 : 1) * (h.shiny ? 2.2 : 1) * (h.panic > 0 ? 1.8 : 1)
+      if (this.auraOn && d < this.radius * 2.2) { h.vx += (dx / (d || 1)) * 60 * dt; h.vy += (dy / (d || 1)) * 40 * dt }
+      const speed = (h.kind === 'runner' ? 1.9 : h.kind === 'guard' ? 0.7 : 1) * (h.shiny ? 2.2 : 1) * (h.panic > 0 ? 1.8 : 1)
       h.x += h.vx * speed * dt; h.y += h.vy * speed * dt
       if (h.x < b.left || h.x > b.right) h.vx *= -1
       if (h.y < b.top || h.y > b.bottom) h.vy *= -1
@@ -245,6 +261,7 @@ export class Hunt {
       }
     }
     this.drops = this.drops.filter((d) => d.life > 0)
+    this.humans = this.humans.filter((h) => !h.flee || (h.x > b.left - 120 && h.x < b.right + 120))
 
     for (const t of this.texts) { t.y += t.vy * dt; t.vy *= 0.94; t.life -= dt }
     this.texts = this.texts.filter((t) => t.life > 0).slice(-60)
@@ -257,13 +274,15 @@ export class Hunt {
   }
 
   hit(h: Human, base: number, bite: boolean, color?: string) {
-    if (!this.humans.includes(h)) return
+    if (!this.humans.includes(h) || h.flee) return
+    if (h.kind === 'boss' && this.duel?.phase === 'intro') return
     const crit = Math.random() < this.critChance
     let dmg = base * (crit ? this.critMult : 1)
-    if (h.kind === 'boss') dmg *= (1 + this.stats.bossDmg / 100) * (this.pact === 'hunter' ? 2.5 : 1)
+    const exposed = h.kind === 'boss' && (this.duel?.exposed ?? 0) > 0
+    if (h.kind === 'boss') dmg *= (1 + this.stats.bossDmg / 100) * (this.pact === 'hunter' ? 2.5 : 1) * (exposed ? 2 : 1)
     h.hp -= dmg; h.flash = 0.12; h.panic = 1
     if (crit) { this.crits++; if (h.kind === 'boss') this.hitStop = Math.max(this.hitStop, 0.03) }
-    if (crit || bite || h.kind === 'boss') this.float(h.x + rand(-10, 10), h.y - 58, fmtShort(dmg) + (crit ? '!' : ''), crit ? '#ffd35c' : color ?? '#ffffff', crit ? 20 : 14)
+    if (crit || bite || h.kind === 'boss') this.float(h.x + rand(-(h.kind === 'boss' ? 40 : 10), h.kind === 'boss' ? 40 : 10), h.y - (h.kind === 'boss' ? 120 : 58), fmtShort(dmg) + (crit ? '!' : ''), exposed ? '#ffb13b' : crit ? '#ffd35c' : color ?? '#ffffff', crit || exposed ? 20 : 14)
     if (h.hp <= 0) this.capture(h)
   }
 
@@ -308,14 +327,7 @@ export class Hunt {
     // explosions
     if (Math.random() < s.explodeChance / 100) this.explode(h.x, h.y, 0)
     // boss summon
-    if (!this.bossSpawned && this.terror >= this.terrorNeeded) {
-      this.bossSpawned = true
-      this.spawn('boss')
-      this.flashRed = 1
-      this.shake = 10
-      this.punch = 1
-      this.sounds.push('boss')
-    }
+    if (!this.bossSpawned && this.terror >= this.terrorNeeded) this.startDuel()
   }
 
   private explode(x: number, y: number, depth: number) {
@@ -333,9 +345,122 @@ export class Hunt {
     }
   }
 
+  // ───────── the werewolf duel
+  get duelTime() { return 20 + this.stats.nightTime * 0.5 }
+
+  private startDuel() {
+    this.bossSpawned = true
+    const b = this.bounds, mid = (b.left + b.right) / 2
+    for (const h of this.humans) { h.flee = true; h.panic = 3; const dir = h.x < mid ? -1 : 1; h.vx = dir * rand(260, 360); h.vy = rand(-30, 30) }
+    this.spawn('boss')
+    const t = this.duelTime
+    this.duel = { phase: 'intro', t: 0, timer: t, max: t, cd: 1.4, exposed: 0, howl: 0, attack: null, count: 0 }
+    this.flashRed = 1; this.shake = 10; this.punch = 1
+    this.sounds.push('boss')
+  }
+
+  /** Where the vampire stands (feet), for werewolf hits. */
+  private get feet() { return { x: this.auraX, y: this.auraY + 26 } }
+
+  private updateDuel(dt: number) {
+    const d = this.duel!, boss = this.boss
+    if (!boss) { this.duel = null; return }
+    const b = this.bounds, era = this.city.era
+    d.t += dt
+    d.howl = Math.max(0, d.howl - dt)
+    if (d.phase === 'intro') {
+      boss.y += (b.top + 60 - boss.y) * Math.min(1, dt * 2.5)
+      if (d.t > 1.2 && d.howl <= 0 && d.t < 1.3) { d.howl = 0.9; this.sounds.push('howl'); this.shake = 8 }
+      if (d.t > 2.2) d.phase = 'fight'
+      return
+    }
+    d.timer -= dt
+    if (d.timer <= 0) return this.bossEscape()
+    d.exposed = Math.max(0, d.exposed - dt)
+    const f = this.feet
+    const a = d.attack
+    if (a) {
+      a.t += dt
+      if (a.kind === 'slam') {
+        if (a.t >= a.windup && !a.done) {
+          a.done = true; d.exposed = 1.3
+          this.shake = Math.max(this.shake, 9); this.sounds.push('slam')
+          this.rings.push({ x: a.x, y: a.y, r: a.r * 0.3, max: a.r * 1.15, life: 0.35, color: '#ffb070', width: 7 })
+          this.burst(a.x, a.y - 6, '#b89070', 18)
+          if (Math.hypot(f.x - a.x, (f.y - a.y) / 0.55) < a.r) this.hurtPlayer(a.x, a.y)
+        }
+        if (a.t >= a.windup + 0.3) d.attack = null
+      } else if (a.t >= a.windup) {
+        const step = 950 * dt
+        boss.x = clamp(boss.x + a.dx * step, b.left, b.right); boss.y = clamp(boss.y + a.dy * step, b.top, b.bottom); a.traveled += step
+        boss.vx = a.dx
+        if (Math.random() < 0.8) this.sparks.push({ x: boss.x + rand(-20, 20), y: boss.y - rand(0, 20), vx: -a.dx * 80, vy: rand(-60, -10), life: 0.4, color: '#c8b090', size: 3 })
+        if (!a.done && Math.hypot(f.x - boss.x, (f.y - boss.y) / 0.6) < 60) { a.done = true; this.hurtPlayer(boss.x, boss.y) }
+        if (a.traveled >= a.len) { d.attack = null; d.exposed = 1; this.shake = Math.max(this.shake, 5); this.sounds.push('slam') }
+      }
+      return
+    }
+    // stalk the vampire
+    const dx = f.x - boss.x, dy = f.y - boss.y, dist = Math.hypot(dx, dy) || 1
+    if (d.exposed <= 0 && dist > 80) {
+      const sp = (70 + era * 12) * dt
+      boss.x += dx / dist * sp; boss.y += dy / dist * sp; boss.vx = dx
+    }
+    boss.vy = dy
+    boss.x = clamp(boss.x, b.left, b.right); boss.y = clamp(boss.y, b.top, b.bottom)
+    if (d.exposed > 0) return
+    d.cd -= dt
+    if (d.cd > 0) return
+    d.count++
+    const enraged = boss.hp < boss.maxHp * 0.5
+    const windup = Math.max(0.5, (enraged ? 0.75 : 0.95) - era * 0.05)
+    d.cd = Math.max(0.8, (enraged ? 1.3 : 1.9) - era * 0.1)
+    if (enraged && d.count % 3 === 0) {
+      // howl: the werewolf calls prey back into the city — food for the vampire's combo
+      d.howl = 0.9; this.sounds.push('howl'); this.shake = 6
+      for (let k = 0; k < 6; k++) this.spawn('common')
+      return
+    }
+    this.sounds.push('warn')
+    if (dist > 170 || Math.random() < 0.45) {
+      const len = Math.min(dist + 140, 560)
+      d.attack = { kind: 'lunge', x: boss.x, y: boss.y, dx: dx / dist, dy: dy / dist, len, r: 46, windup, t: 0, done: false, traveled: 0 }
+    } else {
+      d.attack = { kind: 'slam', x: f.x, y: f.y, dx: 0, dy: 0, len: 0, r: 88 + era * 6, windup, t: 0, done: false, traveled: 0 }
+    }
+  }
+
+  private hurtPlayer(fromX: number, fromY: number) {
+    if (this.invuln > 0 || !this.duel) return
+    this.invuln = 1
+    this.playerHits++
+    this.duel.timer -= 3
+    this.combo = Math.floor(this.combo / 2)
+    this.shake = 14; this.flashRed = 1; this.hitStop = 0.08
+    const dx = this.auraX - fromX, dy = this.auraY + 26 - fromY, d = Math.hypot(dx, dy) || 1, b = this.bounds
+    this.auraX = clamp(this.auraX + dx / d * 90, b.left, b.right); this.auraY = clamp(this.auraY + dy / d * 60, b.top - 60, b.bottom)
+    this.targetX = this.auraX; this.targetY = this.auraY
+    this.float(this.auraX, this.auraY - 50, '-3s', '#ff4060', 26)
+    this.burst(this.auraX, this.auraY, '#ff2a4a', 16)
+    this.sounds.push('hurt')
+  }
+
+  private bossEscape() {
+    const boss = this.boss
+    this.duel = null
+    this.bossEscaped = true
+    if (!boss) return
+    this.humans = this.humans.filter((h) => h !== boss)
+    this.boss = null
+    this.float(boss.x, boss.y - 110, 'FUGIU!', '#ffb13b', 28)
+    for (let k = 0; k < 10; k++) this.sparks.push({ x: boss.x + rand(-30, 30), y: boss.y - rand(0, 90), vx: rand(-80, 80), vy: rand(-120, -20), life: 0.8, color: '#8a8aa0', size: 5 })
+    this.sounds.push('escape')
+  }
+
   private killBoss(h: Human) {
     this.bossKilled = true
     this.boss = null
+    this.duel = null
     this.shake = 16
     this.hitStop = 0.35
     this.punch = 1.4

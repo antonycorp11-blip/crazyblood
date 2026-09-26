@@ -299,3 +299,11 @@ button:disabled { cursor: default }
 @media (max-height: 520px) { .bite-btn { width: 86px; height: 86px; bottom: calc(14px + var(--safe-b)) } .joy { top: calc(100% - 84px - var(--safe-b)) } }
 .screen-hunt .hint { bottom: calc(140px + var(--safe-b)) }
 @media (pointer: fine) { .screen-hunt .hint { bottom: calc(22px + var(--safe-b)) } }
+
+/* ───────── werewolf duel */
+.banner small { display: block; font: 800 clamp(12px, 2vw, 16px) var(--body); letter-spacing: 1px; color: #ffb3c0; text-shadow: 0 2px 0 #000; margin-top: 4px }
+.moon-clock.duel .fill { stroke: #ff3a5c }
+.moon-clock.duel { animation: duelpulse .8s ease-in-out infinite }
+.moon-clock.duel b { color: #ffb3c0 }
+@keyframes duelpulse { 50% { transform: scale(1.08); filter: drop-shadow(0 0 12px #ff3a5c) } }
+.in-duel .hunt-loot, .in-duel .pact-mini { opacity: .45 }

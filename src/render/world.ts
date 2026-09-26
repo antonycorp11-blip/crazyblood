@@ -1,21 +1,100 @@
 // Draws a night of hunting: city, humans, loot, aura, vampire, bats, effects and floating numbers.
 import type { Hunt, Human, Drop } from '../game/hunt'
-import { camera, W, H } from '../viewport'
+import { huntCamera, huntZoom, W, H } from '../viewport'
+import { BOSS_WOLVES } from '../game/data'
 import { activity, bat as drawBat, drawSky, glow, humanAtlas, ready, rect, scenery, sprites } from './scenery'
 
 const ROW: Record<Human['kind'], number> = { common: 0, runner: 1, guard: 2, rare: 3, boss: 4 }
 
-function human(c: CanvasRenderingContext2D, h: Human, t: number) {
+// ───────── werewolf bosses (sheets from the sister project: 0-3 walk, 4-7 walk away, 8-11 claw, 12-15 howl)
+const wolfCache = new Map<string, HTMLImageElement | HTMLCanvasElement>()
+function wolfSheet(index: number) {
+  const [name, tint] = BOSS_WOLVES[index], key = name + (tint ?? '')
+  const hit = wolfCache.get(key); if (hit) return hit
+  const img = new Image()
+  img.src = `/assets/wolves/${name}.webp`
+  wolfCache.set(key, img)
+  if (tint) img.onload = () => {
+    const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height
+    const g = cv.getContext('2d')!
+    g.drawImage(img, 0, 0)
+    g.globalCompositeOperation = 'color'; g.globalAlpha = 0.65; g.fillStyle = tint; g.fillRect(0, 0, cv.width, cv.height)
+    g.globalCompositeOperation = 'destination-in'; g.globalAlpha = 1; g.drawImage(img, 0, 0)
+    wolfCache.set(key, cv)
+  }
+  return img
+}
+
+function werewolf(c: CanvasRenderingContext2D, hunt: Hunt, h: Human, t: number) {
+  const sheet = wolfSheet(hunt.city.index)
+  if (sheet instanceof HTMLImageElement && !ready(sheet)) return
+  const fw = sheet.width / 16, fh = sheet.height, size = BOSS_WOLVES[hunt.city.index][2]
+  const hh = 165 * size, ww = hh * fw / fh
+  const d = hunt.duel
+  let frame: number
+  let wobble = 0
+  if (d && d.howl > 0) frame = 12 + Math.min(3, Math.floor((1 - d.howl / 0.9) * 4))
+  else if (d?.attack) { const a = d.attack; frame = a.t < a.windup ? 8 + Math.min(1, Math.floor((a.t / a.windup) * 2)) : 10 + (Math.floor(t * 14) % 2) }
+  else if (d && d.exposed > 0) { frame = 11; wobble = Math.sin(t * 30) * 3 }
+  else frame = (h.vy < -30 ? 4 : 0) + (Math.floor(t * 7) % 4)
+  const x = Math.round(h.x), y = Math.round(h.y)
+  // menace: red halo under the beast
+  c.globalCompositeOperation = 'lighter'
+  glow(c, x, y - hh * 0.45, hh * 0.7, d && d.exposed > 0 ? 'rgba(255,190,60,0.35)' : 'rgba(255,40,70,0.28)')
+  c.globalCompositeOperation = 'source-over'
+  c.fillStyle = '#05030acc'; c.beginPath(); c.ellipse(x, y + 2, ww * 0.34, 12 * size, 0, 0, Math.PI * 2); c.fill()
+  c.save(); c.translate(x + wobble, y); if (h.vx < 0) c.scale(-1, 1)
+  c.drawImage(sheet, frame * fw, 0, fw, fh, -ww / 2, -hh + 6, ww, hh)
+  if (h.flash > 0) {
+    c.globalCompositeOperation = 'lighter'; c.globalAlpha = Math.min(1, h.flash * 6) * 0.55
+    c.drawImage(sheet, frame * fw, 0, fw, fh, -ww / 2, -hh + 6, ww, hh)
+    c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1
+  }
+  c.restore()
+  if (d && d.exposed > 0) for (let i = 0; i < 3; i++) {
+    const a = t * 6 + i * 2.1
+    c.fillStyle = '#ffd35c'; c.font = '900 18px Inter, sans-serif'; c.textAlign = 'center'
+    c.fillText('★', x + Math.cos(a) * 30, y - hh - 4 + Math.sin(a) * 8)
+  }
+}
+
+/** Ground markings for incoming werewolf attacks — get out of the red. */
+function telegraphs(c: CanvasRenderingContext2D, hunt: Hunt, t: number) {
+  const a = hunt.duel?.attack
+  if (!a) return
+  const k = Math.min(1, a.t / a.windup)
+  if (a.kind === 'slam') {
+    if (a.done) return
+    c.fillStyle = `rgba(255,30,60,${0.12 + k * 0.28})`
+    c.beginPath(); c.ellipse(a.x, a.y, a.r, a.r * 0.55, 0, 0, Math.PI * 2); c.fill()
+    c.strokeStyle = `rgba(255,90,110,${0.6 + Math.sin(t * 30) * 0.3})`; c.lineWidth = 3
+    c.stroke()
+    c.fillStyle = 'rgba(255,60,80,0.35)'
+    c.beginPath(); c.ellipse(a.x, a.y, a.r * k, a.r * 0.55 * k, 0, 0, Math.PI * 2); c.fill()
+  } else if (a.t < a.windup) {
+    c.save(); c.translate(a.x, a.y); c.rotate(Math.atan2(a.dy, a.dx))
+    c.fillStyle = `rgba(255,30,60,${0.12 + k * 0.3})`; c.fillRect(0, -a.r * 0.8, a.len, a.r * 1.6)
+    c.strokeStyle = `rgba(255,90,110,${0.6 + Math.sin(t * 30) * 0.3})`; c.lineWidth = 3; c.strokeRect(0, -a.r * 0.8, a.len, a.r * 1.6)
+    c.fillStyle = 'rgba(255,200,210,0.7)'
+    for (let i = 0; i < 4; i++) {
+      const px = ((i / 4 + t * 1.5) % 1) * a.len
+      c.beginPath(); c.moveTo(px, -14); c.lineTo(px + 16, 0); c.lineTo(px, 14); c.lineTo(px + 6, 0); c.closePath(); c.fill()
+    }
+    c.restore()
+  }
+}
+
+function human(c: CanvasRenderingContext2D, hunt: Hunt, h: Human, t: number) {
+  if (h.kind === 'boss') return werewolf(c, hunt, h, t)
   const atlas = humanAtlas()
   if (!ready(atlas)) return
-  const boss = h.kind === 'boss'
-  const scale = boss ? 1.75 : 1
+  const scale = 1
   const x = Math.round(h.x), y = Math.round(h.y)
   c.fillStyle = '#0b0d1a88'
   c.beginPath(); c.ellipse(x, y + 1, 13 * scale, 5 * scale, 0, 0, Math.PI * 2); c.fill()
-  if (h.shiny || boss) {
+  if (h.shiny) {
     const glow = c.createRadialGradient(x, y - 28 * scale, 4, x, y - 28 * scale, 40 * scale)
-    glow.addColorStop(0, boss ? '#ff4d6d66' : '#ffe27a88'); glow.addColorStop(1, '#0000')
+    glow.addColorStop(0, '#ffe27a88'); glow.addColorStop(1, '#0000')
     c.fillStyle = glow; c.beginPath(); c.arc(x, y - 28 * scale, 40 * scale, 0, Math.PI * 2); c.fill()
   }
   const frame = h.flash > 0 ? 4 : h.panic > 0 ? [1, 3, 2, 3][Math.floor(t * 12 + h.id) % 4] : Math.floor(t * 5 + h.id) % 3
@@ -37,8 +116,7 @@ function human(c: CanvasRenderingContext2D, h: Human, t: number) {
     const a = t * 3 + i * 2.1 + h.id
     rect(c, x + Math.cos(a) * 18, y - 34 + Math.sin(a * 1.3) * 16, 3, 3, '#fff3b0')
   }
-  if (!boss && h.hp < h.maxHp) { rect(c, x - 16, y - 66, 32, 4, '#1c1729'); rect(c, x - 15, y - 65, 30 * Math.max(0, h.hp / h.maxHp), 2, h.shiny ? '#ffd35c' : '#ff5470') }
-  if (boss) { rect(c, x - 5, y - 122, 10, 8, '#ffe38a'); rect(c, x - 9, y - 126, 4, 6, '#ffe38a'); rect(c, x + 5, y - 126, 4, 6, '#ffe38a') }
+  if (h.hp < h.maxHp) { rect(c, x - 16, y - 66, 32, 4, '#1c1729'); rect(c, x - 15, y - 65, 30 * Math.max(0, h.hp / h.maxHp), 2, h.shiny ? '#ffd35c' : '#ff5470') }
 }
 
 function drop(c: CanvasRenderingContext2D, d: Drop, t: number) {
@@ -104,7 +182,9 @@ function vampire(c: CanvasRenderingContext2D, hunt: Hunt, t: number) {
     c.drawImage(sprites.vampires, frame * 112, hunt.city.era * 112, 112, 112, x - 42 - (hunt.auraX - hunt.vampireX) * 0.15, y - 86 - (hunt.auraY + 26 - hunt.vampireY) * 0.15, 84, 89)
     c.globalAlpha = 1; c.globalCompositeOperation = 'source-over'
   }
+  if (hunt.invuln > 0 && Math.floor(t * 20) % 2) c.globalAlpha = 0.35
   c.drawImage(sprites.vampires, frame * 112, hunt.city.era * 112, 112, 112, x - 42, y - 86, 84, 89)
+  c.globalAlpha = 1
 }
 
 function bats(c: CanvasRenderingContext2D, hunt: Hunt, t: number) {
@@ -119,9 +199,10 @@ function bats(c: CanvasRenderingContext2D, hunt: Hunt, t: number) {
 }
 
 export function drawHunt(c: CanvasRenderingContext2D, hunt: Hunt, t: number) {
-  const { scale, x: ox, y: oy } = camera(c.canvas.width, c.canvas.height)
+  const { scale, x: ox, y: oy } = huntCamera(c.canvas.width, c.canvas.height)
   c.setTransform(1, 0, 0, 1, 0, 0)
-  c.clearRect(0, 0, c.canvas.width, c.canvas.height)
+  c.fillStyle = '#07040b'; c.fillRect(0, 0, c.canvas.width, c.canvas.height)
+  wolfSheet(hunt.city.index) // preload the city's werewolf
   const shake = hunt.shake
   // camera punch: zoom toward the action on big moments
   const z = 1 + Math.sin(Math.min(1, hunt.punch) * Math.PI / 2) * 0.07
@@ -144,11 +225,20 @@ export function drawHunt(c: CanvasRenderingContext2D, hunt: Hunt, t: number) {
   }
   c.globalAlpha = 1
   activity(c, hunt.city.era, t, hunt.city.index)
+  if (hunt.duel) {
+    // duel: the city goes dark and a blood-moon spotlight falls on the arena
+    const k = Math.min(1, hunt.duel.t / 1.2)
+    c.fillStyle = `rgba(8,0,12,${0.45 * k})`; c.fillRect(-W, -H, 3 * W, 3 * H)
+    c.globalCompositeOperation = 'lighter'
+    glow(c, ((hunt.boss?.x ?? hunt.vampireX) + hunt.vampireX) / 2, 360, 340, `rgba(160,20,40,${0.25 * k})`)
+    c.globalCompositeOperation = 'source-over'
+  }
+  telegraphs(c, hunt, t)
   aura(c, hunt, t)
   for (const d of hunt.drops) drop(c, d, t)
   const people = [...hunt.humans].sort((a, b) => a.y - b.y)
   let drawn = false
-  for (const h of people) { if (!drawn && h.y > hunt.vampireY) { vampire(c, hunt, t); drawn = true } human(c, h, t) }
+  for (const h of people) { if (!drawn && h.y > hunt.vampireY) { vampire(c, hunt, t); drawn = true } human(c, hunt, h, t) }
   if (!drawn) vampire(c, hunt, t)
   for (const f of hunt.fx) {
     const k = f.age / f.duration
@@ -197,6 +287,18 @@ export function drawHunt(c: CanvasRenderingContext2D, hunt: Hunt, t: number) {
     c.lineWidth = 4; c.strokeStyle = '#1a0710'; c.strokeText(f.text, f.x, f.y); c.fillStyle = f.color; c.fillText(f.text, f.x, f.y)
   }
   c.globalAlpha = 1
+  // outside the city is night fog (visible when the camera zooms out on phones)
+  if (huntZoom(c.canvas.width, c.canvas.height) < 1) {
+    const fog = '#07040b'
+    c.fillStyle = fog; c.fillRect(-W, H, 3 * W, H); c.fillRect(-W, -H, W, 3 * H); c.fillRect(W, -H, W, 3 * H)
+    const edge = (x0: number, y0: number, x1: number, y1: number, rx: number, ry: number, rw: number, rh: number) => {
+      const g = c.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, '#07040b00'); g.addColorStop(1, fog)
+      c.fillStyle = g; c.fillRect(rx, ry, rw, rh)
+    }
+    edge(0, H - 80, 0, H, -W, H - 80, 3 * W, 80)
+    edge(70, 0, 0, 0, 0, -H, 70, 3 * H)
+    edge(W - 70, 0, W, 0, W - 70, -H, 70, 3 * H)
+  }
   if (hunt.flashRed > 0) { c.fillStyle = `rgba(200,20,50,${hunt.flashRed * 0.25})`; c.fillRect(0, 0, W, H) }
   c.setTransform(1, 0, 0, 1, 0, 0)
   // screen-space: vignette that turns red as the combo climbs, white flash on hit-stop
