@@ -1,43 +1,25 @@
-# Crazyblood — As Eras da Caçada
+# CrazyBlood — As Eras da Caçada
 
-Incremental de captura com duas telas: **Mapa** e **Upgrades**. A caçada e o resumo da noite acontecem no próprio mapa. A interface ocupa a janela sem rolagem, com disposição própria para celular em pé, paisagem e PC.
+Incremental **ativo** de noites curtas, inspirado em *Maktala: Slime Lootfest* e *Fill Up The Hole*: cada noite é uma rodada de 12–40 s cheia de loot; entre as noites você gasta o que colheu na Árvore de Sangue e a próxima noite fica visivelmente mais explosiva.
 
-## Jogar
+## Loop
+1. **Covil** (tela inicial) — cresce com o seu progresso: velas, estandartes, fonte de sangue, caixões, troféus, morcegos.
+2. **Caçada** — a aura de presas causa dano contínuo onde está o mouse (ou o dedo); clique/toque = mordida forte. Humanos soltam loot físico com raridade (frascos de sangue, dentes de ouro, fragmentos, Sangue Puro) que precisa ser recolhido. Humanos **shiny** raros valem ×10. A cidade enche em ondas; capturas enchem a barra de **Terror** até o **chefe** aparecer. Derrotar o chefe conquista a cidade.
+3. **Amanhecer** — contagem do loot, **Dados de Sangue** (pares, trincas e jackpot) e escolha de um **Pacto** para a próxima noite.
+4. **Árvore de Sangue** — ~100 nós em teia (arraste para navegar, pinça/scroll para zoom). Comprar um nó revela os vizinhos. Quatro recursos, poderes únicos (explosões em cadeia, morcegos, escrivão de dados…) e nós infinitos para o fim de jogo.
 
+20 cidades em 4 eras (Pré-história → Futura). Cada era concluída dá um **Eco** permanente (×1,3 dano e sangue).
+
+## Desenvolvimento
 ```bash
 npm install
 npm run dev
-```
-
-Segure sobre os humanos e arraste para acompanhar a fuga. A captura tem cadência própria: clicar mais depressa não aumenta o dano. Guardas anunciam o contra-ataque com um círculo vermelho; solte ou troque de alvo antes do golpe. Capturas carregam o Éclipse, uma explosão que também recupera vida e reduz o alerta. Ative pelo botão ou pela barra de espaço.
-
-Cada cidade exige três conquistas: domínio acumulado, vários contratos e uma cota de capturas em uma única noite. Na noite decisiva é preciso capturar o alvo e sobreviver até o amanhecer. O sangue de tentativas incompletas fica disponível para upgrades. A primeira cidade exige 350 capturas acumuladas, quatro contratos e uma noite de 70 capturas.
-
-Cada uma das quatro eras tem cinco cidades. Depois da quinta, a hibernação reinicia sangue e poderes, concedendo um eco permanente de força e tempo. A última cidade exige a Imperatriz, domínio completo e 3.000 capturas em uma noite.
-
-## Upgrades e arte
-
-A árvore começa com dois poderes. A compra revela novas habilidades e ramos. Cada ramo cabe na tela e mostra somente os nós já descobertos. Os poderes ampliam duração, dano, cura, captura em área, servos, rendimento e reações em cadeia.
-
-O atlas detalhado `public/assets/sprites/humans.png` é usado em todas as eras, com cinco arquétipos e poses de movimento, corrida, dano e captura. Os humanos simplificados das versões anteriores não são carregados. Vampiros, edifícios, ícones, fogo, morcegos, pulsos e o amanhecer também usam atlas. Cenários e personagens são compostos em canvas; não há uma fotografia de cidade por baixo da jogatina.
-
-As fontes geradas ficam em `art/source/`. O pipeline local normaliza e exporta os atlas:
-
-```bash
-python3 -m pip install -r scripts/requirements.txt
-python3 scripts/build_assets.py
-```
-
-Esta campanha usa `crazyblood-hunt-v5`. Saves anteriores ficam preservados em suas chaves antigas.
-
-## Verificar
-
-```bash
-npm run test:smoke
-node scripts/balance.mjs
+npm run test:smoke          # regras do jogo
+node scripts/balance.mjs    # simula um jogador perfeito até a vitória (ritmo por cidade)
 npm run build
 ```
-
-O smoke cobre cadência, evasão de contra-ataques, contratos, objetivos combinados, câmera, poder e hibernação. A simulação de balanceamento usa mira perfeita e compras automáticas para estabelecer um limite inferior de tempo; não representa o tempo de uma pessoa jogando. Efeitos simultâneos e resolução de renderização são limitados para reduzir o custo em celulares.
-
-O push para `main` dispara o deploy Cloudflare configurado em `wrangler.jsonc`.
+- Código: `src/game/` (regras, sem DOM), `src/render/` (canvas), `src/main.ts` (telas), `src/sound.ts` (efeitos sintetizados).
+- Balanceamento: `CITY_BALANCE` em `src/game/data.ts` e `TREE_BALANCE` + tabela de nós em `src/game/tree.ts`.
+- `?reset` na URL apaga o save. Em `npm run dev`, `window.__cb.save` dá acesso ao save no console.
+- Arte: atlas em `public/assets/sprites/` (fontes em `art/source/`, `python3 scripts/build_assets.py`). Novas artes: `python3 scripts/gen_image.py` (OpenAI; chave em `.env.local`).
+- Deploy: push na `main` → Cloudflare (`wrangler.jsonc`).

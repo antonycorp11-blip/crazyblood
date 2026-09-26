@@ -1,141 +1,338 @@
 import './style.css'
-import { BRANCHES, DISTRICTS, ERAS, SKILLS, skillCost, type Branch } from './incremental/data'
-import { Night, available, buy, hibernate, level, load, persist } from './incremental/game'
-import { drawCity } from './city'
+import { CITIES, ERAS, PACTS, RESOURCES, type PactId, type Resource } from './game/data'
+import { Hunt, fmtShort } from './game/hunt'
+import { bankNight, type NightReport } from './game/night-end'
+import { affordableCount, buyNode, canBuy, isMaxed, isRevealed, priceOf, rollPacts } from './game/progress'
+import { level, load, persist, resetSave, type Save } from './game/save'
+import { NODES, NODE_BY_ID, computeStats, describe, type TreeNode } from './game/tree'
+import { drawHunt } from './render/world'
+import { drawLair, lairState } from './render/lair'
 import { camera } from './viewport'
+import { sfx, setMuted } from './sound'
 
-const app=document.querySelector<HTMLDivElement>('#app')!
-const save=load()
-let screen:'map'|'upgrades'='map'
-let night:Night|null=null
-let ambient=new Night(save)
-let selected='moon'
-let branch:Branch|'roots'='roots'
-let lastFrame=performance.now(),lastPaint=0,lastHud=0
-let held=false,aim={x:0,y:0},pointerId:number|null=null
-let audio:AudioContext|null=null
-const fmt=(n:number)=>new Intl.NumberFormat('pt-BR',{notation:n>=10000?'compact':'standard',maximumFractionDigits:1}).format(Math.floor(n))
-const d=()=>DISTRICTS[save.district]
-const quota=()=>save.district===19?3000:d().quota
-const active=()=>!!night&&!night.ended
-const visible=(skill:typeof SKILLS[number])=>!skill.requires||level(save,skill.requires)>0
-const affordable=()=>SKILLS.filter(s=>available(save,s.id)&&save.blood>=skillCost(s,level(save,s.id))).length
-const icon=(index:number,cls='')=>`<span class="art-icon ${cls}" style="--ix:${index%6};--iy:${Math.floor(index/6)}" aria-hidden="true"></span>`
-function sound(name:string){
-  if(save.muted)return
-  try{
-    audio??=new AudioContext();if(audio.state==='suspended')void audio.resume()
-    const notes:Record<string,[number,number,number]>={hit:[210,130,.06],capture:[420,740,.13],hurt:[140,50,.2],buy:[420,920,.23],pulse:[130,740,.3],missionComplete:[620,1100,.35]}
-    const [from,to,len]=notes[name]||[350,510,.09],at=audio.currentTime,o=audio.createOscillator(),g=audio.createGain()
-    o.type=name==='hurt'?'sawtooth':'triangle';o.frequency.setValueAtTime(from,at);o.frequency.exponentialRampToValueAtTime(to,at+len)
-    g.gain.setValueAtTime(.04,at);g.gain.exponentialRampToValueAtTime(.0001,at+len);o.connect(g);g.connect(audio.destination);o.start();o.stop(at+len)
-  }catch{}
+const app = document.querySelector<HTMLDivElement>('#app')!
+if (location.search.includes('reset')) { resetSave(); history.replaceState(null, '', location.pathname) }
+let save: Save = load()
+setMuted(save.muted)
+type Screen = 'lair' | 'hunt' | 'tree'
+let screen: Screen = 'lair'
+let hunt: Hunt | null = null
+let report: NightReport | null = null
+let offeredPacts: PactId[] = []
+let selectedNode = 'root'
+let pan = { x: 0, y: 0, zoom: 1 }
+let lastFrame = performance.now(), lastHud = 0
+
+const fmt = (n: number) => fmtShort(Math.floor(n))
+const city = () => CITIES[save.city]
+
+// ───────────────────────── small view helpers
+const resIcon = (r: Resource, cls = '') => `<i class="res-ico ri-${r} ${cls}" aria-hidden="true"></i>`
+const skillIcon = (index: number, cls = '') => `<span class="skill-ico ${cls}" style="--ix:${index % 6};--iy:${Math.floor(index / 6)}" aria-hidden="true"></span>`
+const wallet = () => `<div class="wallet">${(Object.keys(RESOURCES) as Resource[]).filter((r) => r === 'blood' || save.res[r] > 0 || NODES.some((n) => n.res === r && isRevealed(save, n))).map((r) => `<span class="gem gem-${r}" title="${RESOURCES[r].name}">${resIcon(r)}<b id="res-${r}">${fmt(save.res[r])}</b></span>`).join('')}</div>`
+
+// ───────────────────────── LAIR (home)
+function lairView() {
+  const c = city(), era = ERAS[c.era]
+  const eraCities = CITIES.filter((x) => x.era === c.era)
+  const medals = eraCities.map((x) => {
+    const locked = x.index > save.unlocked, cleared = save.cleared[x.index]
+    return `<button class="medal ${x.index === save.city ? 'current' : ''} ${cleared ? 'cleared' : ''}" data-city="${x.index}" ${locked ? 'disabled' : ''} aria-label="${x.name}">${cleared ? '☠' : locked ? '✕' : x.slot + 1}</button>`
+  }).join('<i class="medal-link"></i>')
+  const pact = save.pact ? `<div class="pact-badge">${skillIcon(PACTS[save.pact].icon)}<span><b>${PACTS[save.pact].name}</b> ${PACTS[save.pact].text}</span></div>` : ''
+  const afford = affordableCount(save)
+  const needed = Math.ceil(c.terror * (1 - Math.min(60, computeStats(save.levels).terrorPct) / 100))
+  return `
+  <div class="logo"><span class="logo-crazy">Crazy</span><span class="logo-blood">Blood</span><small>as eras da caçada</small></div>
+  ${wallet()}
+  <button class="round-btn sound-btn" data-action="mute" aria-label="Som">${save.muted ? '♪̸' : '♪'}</button>
+  <div class="lair-panel frame">
+    <div class="era-ribbon" style="--era:${era.color}">${era.name} · ${era.years}</div>
+    <h1 class="city-title">${c.name}</h1>
+    <div class="boss-line">${save.cleared[c.index] ? '☠ Chefe derrotado — cace à vontade' : `Chefe <b>${c.boss}</b> surge após <b>${needed}</b> capturas numa noite`}</div>
+    <div class="medals">${medals}</div>
+    ${pact}
+    <div class="lair-actions">
+      <button class="big-btn tree-btn" data-action="tree">${skillIcon(6)}<span>ÁRVORE</span>${afford ? `<em class="badge">${afford}</em>` : ''}</button>
+      <button class="big-btn hunt-btn" data-action="hunt"><span class="hunt-label">CAÇAR</span><small>${save.nights === 0 ? 'a primeira noite' : 'noite ' + (save.nights + 1)}</small></button>
+    </div>
+  </div>`
 }
-function top(){return `<header class="game-top"><span class="wordmark">☾ CRAZYBLOOD</span><span class="wallet">${icon(8)}<b id="wallet">${fmt(save.blood)}</b></span><span class="echo">✦ ${save.relics}</span><button class="sound" data-action="mute" aria-label="Alternar som">${save.muted?'♫̸':'♫'}</button></header>`}
-function nav(){return `<nav class="screen-tabs" aria-label="Telas do jogo"><button data-screen="map" class="${screen==='map'?'current':''}"><span>⌖</span> MAPA</button><button data-screen="upgrades" ${active()?'disabled':''} class="${screen==='upgrades'?'current':''}"><span>✦</span> UPGRADES <i id="affordable">${affordable()||''}</i></button></nav>`}
-function objectives(){
-  const progress=save.progress[save.district]||0,seals=save.contracts[save.district]||0,best=active()?night!.captures:save.bestByCity[save.district]||0
-  return `<div class="objectives" aria-label="Requisitos para conquistar a cidade">${[['Domínio',progress,d().domination],['Contratos',seals,d().seals],['Na mesma noite',best,quota()]].map(([label,n,total],i)=>`<div class="objective"><span>${label}</span><b id="objective-${i}">${fmt(Number(n))}<em>/${fmt(Number(total))}</em></b><div class="meter"><i id="meter-${i}" style="width:${Math.min(100,Number(n)/Number(total)*100)}%"></i></div></div>`).join('')}</div>`
+
+// ───────────────────────── HUNT
+function huntView() {
+  const c = city()
+  const touch = matchMedia('(pointer: coarse)').matches
+  return `
+  <div class="hunt-top">
+    <div class="moon-clock"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" class="track"/><circle cx="32" cy="32" r="27" class="fill" id="moon-arc"/></svg><b id="time">12</b></div>
+    <div class="terror"><span id="terror-label">TERROR</span><div class="terror-bar"><i id="terror-fill"></i></div></div>
+  </div>
+  <div class="hunt-left"><div class="captures"><b id="caps">0</b><span>capturas</span></div><div class="combo" id="combo"></div></div>
+  <div class="hunt-loot">${(['blood', 'teeth', 'shard', 'pure'] as Resource[]).map((r) => `<span class="loot-line" id="loot-${r}-wrap" ${r === 'blood' ? '' : 'hidden'}>${resIcon(r)}<b id="loot-${r}">0</b></span>`).join('')}</div>
+  <button class="round-btn flee-btn" data-action="flee" aria-label="Encerrar noite">✕</button>
+  <div class="banner" id="banner"></div>
+  ${save.nights < 3 ? `<div class="hint">${touch ? 'Segure o dedo sobre os humanos · toque para morder' : 'Passe o mouse sobre os humanos · clique para morder'}<small>Recolha o loot brilhante antes que ele suma</small></div>` : ''}
+  <div class="pact-mini">${save.pact ? skillIcon(PACTS[save.pact].icon) + PACTS[save.pact].name : c.name}</div>`
 }
-function dock(){
-  if(active())return `<div class="hunt-controls"><button data-action="power" id="power" class="power-button" disabled>${icon(24)}<span id="power-label">ÉCLIPSE · 0%</span></button><span class="control-tip">Segure e arraste para capturar.<br><b>Vermelho? Troque de alvo.</b></span><button class="retreat" data-action="retreat" aria-label="Encerrar caçada">↩</button></div>`
-  const ready=save.era<3&&save.cleared[save.era*5+4]
-  const result=night?.ended?`${night.won?'✦ Eclipse total: as quatro eras são suas':night.qualified?'✦ Cidade conquistada':night.endReason==='defeat'?'Você foi repelido':night.endReason==='lockdown'?'Alerta máximo':night.targetEscaped?'O alvo escapou':'A noite terminou'} · ${night.captures} capturas · +${fmt(night.blood)} sangue`:'Conquiste os 3 objetivos e sobreviva ao amanhecer.'
-  return `<div class="run-summary" role="status">${result}</div><div class="launch-row"><div class="next-night"><b>${22+6*level(save,'moon')+12*level(save,'dusk')+30*level(save,'immortal')+save.relics*4}s</b><span>de noite</span><b>${1+save.relics+level(save,'fang')}</b><span>força</span></div><button class="primary" data-action="${ready?'hibernate':'start'}">${ready?'HIBERNAR →':night?.ended?'CAÇAR NOVAMENTE':'INICIAR CAÇADA'} <span>➜</span></button></div>`
-}
-function mapScreen(){
-  return `<section class="map-screen" aria-label="Mapa e caçada"><div class="map-heading"><div><span class="era-label">${ERAS[save.era].name} · ERA ${save.era+1}/4</span><h1>${d().name}</h1></div><div class="city-path" aria-label="Cidades desta era">${ERAS[save.era].cities.map((c,i)=>{const id=save.era*5+i;return `<button data-city="${id}" aria-label="${c[0]}" ${id>save.unlocked||active()?'disabled':''} class="${id===save.district?'selected':''} ${save.cleared[id]?'complete':''}">${save.cleared[id]?'✓':id>save.unlocked?'·':i+1}</button>`}).join('')}</div></div>${objectives()}<div class="arena"><canvas id="world" aria-label="Cidade: segure sobre humanos para capturar"></canvas><div class="arena-shade"></div><div class="night-hud ${active()?'':'quiet'}"><div class="clock"><span id="timer">${active()?Math.ceil(night!.remaining)+'s':'☾'}</span><i id="timebar"></i></div><span id="health">${active()?'♥'.repeat(night!.health):'A LONGA CAÇADA'}</span><span id="combo">${active()?'COMBO 0':'20 cidades · 4 eras'}</span></div><div class="target-banner" id="target">${active()?'Encontre o alvo dourado':d().target+' · alvo do contrato'}</div><div class="field-hint" id="field-hint">${active()?'Segure sobre um humano para capturar':'Capture, evolua e conquiste a era'}</div><div class="alarm-track"><i id="alarm"></i></div></div><footer class="map-dock">${dock()}</footer></section>`
-}
-function upgradesScreen(){
-  const skill=SKILLS.find(s=>s.id===selected)!,lv=level(save,selected),b=BRANCHES[skill.branch]
-  const branches=(Object.keys(BRANCHES) as Branch[]).filter(key=>SKILLS.some(s=>s.branch===key&&visible(s)))
-  const nodes=SKILLS.filter(s=>visible(s)&&(branch==='roots'?!s.requires:s.branch===branch))
-  const horizontal=innerWidth>650&&innerHeight<500
-  const positions=nodes.map((_,i)=>horizontal?{x:(i+.5)*100/nodes.length,y:47}:nodes.length<=2?{x:nodes.length===1?50:30+i*40,y:47}:{x:27+(i%2)*46,y:18+Math.floor(i/2)*30})
-  const links=nodes.map((s,i)=>{const parent=nodes.findIndex(n=>n.id===s.requires);if(parent<0)return '';return `<path d="M ${positions[parent].x} ${positions[parent].y} Q 50 ${(positions[parent].y+positions[i].y)/2} ${positions[i].x} ${positions[i].y}"/>`}).join('')
-  const can=available(save,selected),cost=skillCost(skill,lv)
-  return `<section class="upgrade-screen" aria-label="Upgrades"><div class="upgrade-heading"><span class="era-label">SANGUE TRANSFORMADO EM PODER</span><h1>Raízes da noite</h1><p>Cada despertar revela a próxima ramificação.</p></div><div class="branch-tabs" aria-label="Ramos de habilidades"><button data-branch="roots" class="${branch==='roots'?'current':''}">RAIZ</button>${branches.map(key=>`<button data-branch="${key}" class="${branch===key?'current':''}" style="--branch:${BRANCHES[key].color}">${BRANCHES[key].label}</button>`).join('')}</div><div class="constellation" style="--branch:${branch==='roots'?'#ee91b7':BRANCHES[branch].color}"><div class="root-halo"></div><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${links}</svg>${nodes.map((s,i)=>{const l=level(save,s.id),index=SKILLS.indexOf(s);return `<button class="skill-orb ${selected===s.id?'selected':''} ${l?'owned':''} ${available(save,s.id)&&save.blood>=skillCost(s,l)?'affordable':''}" style="left:${positions[i].x}%;top:${positions[i].y}%;--branch:${BRANCHES[s.branch].color}" data-skill="${s.id}" aria-label="${s.name}">${icon(index)}<b>${s.name}</b><small>${l}/${s.max}</small></button>`}).join('')}<span class="tree-caption">${nodes.length<2?'Um novo poder está ao seu alcance':'Siga o sangue. Desperte o próximo poder.'}</span></div><footer class="upgrade-dock" style="--branch:${b.color}">${icon(SKILLS.indexOf(skill),'detail-icon')}<div class="skill-description"><span>${b.label} · NÍVEL ${lv}/${skill.max}</span><h2>${skill.name}</h2><p>${skill.effect}</p></div><button class="primary buy" data-action="buy" ${!can||save.blood<cost?'disabled':''}>${lv>=skill.max?'MAXIMIZADO':'EVOLUIR · '+fmt(cost)+' ♦'}</button><p class="skill-flavor">${skill.description}</p></footer></section>`
-}
-function render(){
-  held=false;pointerId=null
-  app.innerHTML=`<div class="game-shell">${top()}<main>${screen==='map'?mapScreen():upgradesScreen()}</main>${nav()}</div>`
-  if(screen==='map'){paint();updateHUD()}
-}
-function paint(){
-  const canvas=document.querySelector<HTMLCanvasElement>('#world');if(!canvas)return
-  const rect=canvas.getBoundingClientRect(),ratio=Math.min(1.5,devicePixelRatio||1)
-  const width=Math.round(rect.width*ratio),height=Math.round(rect.height*ratio)
-  if(!width||!height)return
-  if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height}
-  const world=active()?night!:ambient
-  world.setViewport(rect.width,rect.height)
-  drawCity(canvas.getContext('2d')!,world,performance.now()/1000,!active())
-}
-function updateHUD(){
-  const set=(id:string,value:string)=>{const el=document.getElementById(id);if(el)el.textContent=value}
-  set('wallet',fmt(save.blood));set('affordable',String(affordable()||''))
-  if(!active())return
-  const n=night!
-  set('timer',Math.ceil(n.remaining)+'s');set('health',n.health>7?`♥ ${n.health}/${n.maxHealth}`:'♥'.repeat(n.health)+'♡'.repeat(n.maxHealth-n.health));set('combo',n.combo>1?`×${n.combo} COMBO`:`${n.captures} capturas`)
-  const named=n.humans.find(h=>h.named)
-  set('target',n.mission?'✦ Contrato capturado':n.targetEscaped?'Alvo escapou · continue colhendo sangue':named?`${d().target} · foge em ${Math.max(0,Math.ceil(14+level(save,'stalk')*6-named.life))}s`:`${d().target} chega em ${Math.ceil(n.missionTimer)}s`)
-  const current=n.humans.find(h=>h.id===n.focusId)
-  set('field-hint',current?.windup?'⚠ CONTRA-ATAQUE! TROQUE DE ALVO':n.charge>=100&&n.powerCooldown<=0?'ÉCLIPSE PRONTO · use o poder abaixo':`+${fmt(n.blood)} sangue · ${n.servants} servos`)
-  for(const [i,value,total] of [[0,save.progress[save.district]||0,d().domination],[1,save.contracts[save.district]||0,d().seals],[2,n.captures,quota()]]){
-    const el=document.getElementById('objective-'+i);if(el)el.innerHTML=`${fmt(value)}<em>/${fmt(total)}</em>`
-    const meter=document.getElementById('meter-'+i);if(meter)meter.style.width=Math.min(100,value/total*100)+'%'
+
+function updateHud() {
+  if (!hunt) return
+  const set = (id: string, v: string) => { const e = document.getElementById(id); if (e && e.textContent !== v) e.textContent = v }
+  set('time', String(Math.ceil(hunt.remaining)))
+  const arc = document.getElementById('moon-arc'); if (arc) arc.style.strokeDashoffset = String(170 * (1 - hunt.remaining / hunt.duration))
+  set('caps', fmt(hunt.captures))
+  const combo = document.getElementById('combo')
+  if (combo) { const txt = hunt.combo >= 5 ? `×${hunt.combo} COMBO` : ''; if (combo.textContent !== txt) { combo.textContent = txt; combo.classList.remove('bump'); void combo.offsetWidth; combo.classList.add('bump') } }
+  for (const r of ['blood', 'teeth', 'shard', 'pure'] as Resource[]) {
+    set('loot-' + r, fmt(hunt.loot[r]))
+    const wrap = document.getElementById(`loot-${r}-wrap`); if (wrap && hunt.loot[r] > 0) wrap.hidden = false
   }
-  const time=document.getElementById('timebar');if(time)time.style.width=n.remaining/n.duration*100+'%'
-  const alarm=document.getElementById('alarm');if(alarm)alarm.style.width=n.alarm+'%'
-  const power=document.getElementById('power') as HTMLButtonElement|null;if(power){power.disabled=n.charge<100||n.powerCooldown>0;power.style.setProperty('--charge',n.charge+'%')}
-  set('power-label',n.powerCooldown>0?`ÉCLIPSE · ${Math.ceil(n.powerCooldown)}s`:n.charge>=100?'SOLTAR ÉCLIPSE':`ÉCLIPSE · ${Math.floor(n.charge)}%`)
-}
-function strike(){
-  if(!active())return
-  const canvas=document.querySelector<HTMLCanvasElement>('#world');if(!canvas)return
-  const rect=canvas.getBoundingClientRect(),cam=camera(rect.width,rect.height)
-  night!.click((aim.x-rect.left-cam.x)/cam.scale,(aim.y-rect.top-cam.y)/cam.scale,Math.min(40,24/cam.scale))
-}
-function frame(now:number){
-  const dt=Math.min(.06,(now-lastFrame)/1000);lastFrame=now
-  if(screen==='map'){
-    if(active()){
-      if(held)strike()
-      night!.update(dt)
-      if(night!.lastSound){sound(night!.lastSound);night!.lastSound=''}
-      if(night!.ended){ambient=new Night(save);render()}
-    }else{
-      const [left,right]=ambient.horizontalBounds,[top,bottom]=ambient.verticalBounds
-      for(const h of ambient.humans){h.x+=h.vx*dt;h.y+=h.vy*dt;if(h.x<left||h.x>right)h.vx*=-1;if(h.y<top||h.y>bottom)h.vy*=-1;h.x=Math.max(left,Math.min(right,h.x));h.y=Math.max(top,Math.min(bottom,h.y))}
+  const fill = document.getElementById('terror-fill'), bar = document.querySelector('.terror')
+  if (fill && bar) {
+    if (hunt.boss) {
+      bar.classList.add('boss-mode')
+      fill.style.width = (100 * Math.max(0, hunt.boss.hp / hunt.boss.maxHp)) + '%'
+      set('terror-label', `☠ ${hunt.city.boss.toUpperCase()} · ${fmt(hunt.boss.hp)}`)
+    } else if (hunt.bossKilled) {
+      bar.classList.remove('boss-mode'); bar.classList.add('boss-dead'); fill.style.width = '100%'; set('terror-label', '☠ CHEFE DERROTADO')
+    } else {
+      fill.style.width = Math.min(100, (hunt.terror / hunt.terrorNeeded) * 100) + '%'
+      set('terror-label', `TERROR ${hunt.terror} / ${hunt.terrorNeeded}`)
     }
-    if(now-lastPaint>33){paint();lastPaint=now}
-    if(now-lastHud>100){updateHUD();lastHud=now}
   }
+}
+
+function banner(text: string, kind = '') {
+  const b = document.getElementById('banner'); if (!b) return
+  b.innerHTML = text; b.className = 'banner ' + kind
+  void b.offsetWidth; b.classList.add('show')
+}
+
+// ───────────────────────── RESULT
+function resultView(r: NightReport) {
+  const h = hunt!
+  const title = r.outcome === 'victory' ? 'ECLIPSE TOTAL' : h.bossKilled ? 'CHEFE DERROTADO' : 'AMANHECER'
+  const sub = r.outcome === 'era' ? `Nova era desperta: <b>${ERAS[CITIES[save.city].era].name}</b> · Eco +1 (×1,3 dano e sangue)` : r.outcome === 'city' ? `${h.city.name} caiu. Próxima cidade: <b>${city().name}</b>` : r.outcome === 'victory' ? 'A história inteira pertence aos vampiros.' : h.bossSpawned ? `${h.city.boss} escapou ao amanhecer. Fique mais forte e volte.` : `O chefe surge com <b>${h.terrorNeeded}</b> capturas numa noite.`
+  const lootRows = (['blood', 'teeth', 'shard', 'pure'] as Resource[]).filter((k) => r.total[k] >= 1).map((k) => `<div class="loot-row">${resIcon(k)}<span>${RESOURCES[k].name}</span><b class="count" data-to="${Math.floor(r.total[k])}">0</b></div>`).join('')
+  const dice = r.dice.faces.map((f, i) => `<div class="die rolling" style="--d:${i * 0.12}s" data-face="${f}">${pips(1 + ((f + i) % 6))}</div>`).join('')
+  const pacts = offeredPacts.map((p) => `<button class="pact-card" data-pact="${p}">${skillIcon(PACTS[p].icon)}<b>${PACTS[p].name}</b><span>${PACTS[p].text}</span></button>`).join('')
+  const afford = affordableCount(save)
+  return `<div class="overlay"><div class="result frame">
+    <div class="result-title ${h.bossKilled ? 'win' : ''}">${title}</div>
+    <p class="result-sub">${sub}</p>
+    <div class="result-stats"><div><b>${fmt(h.captures)}</b><span>capturas</span></div><div><b>×${h.bestCombo}</b><span>combo</span></div><div><b>${h.crits}</b><span>críticos</span></div><div><b>${h.shinies}</b><span>shiny</span></div></div>
+    <div class="result-body">
+      <div class="loot-table">${lootRows}</div>
+      <div class="dice-zone"><div class="zone-title">DADOS DE SANGUE</div><div class="dice">${dice}</div><div class="dice-labels">${r.dice.labels.map((l) => `<span>${l}</span>`).join('')}</div></div>
+    </div>
+    ${pacts ? `<div class="pact-zone"><div class="zone-title">ESCOLHA UM PACTO PARA A PRÓXIMA NOITE</div><div class="pacts">${pacts}</div></div>` : ''}
+    <div class="result-actions"><button class="big-btn tree-btn small" data-action="tree">${skillIcon(6)}<span>ÁRVORE</span>${afford ? `<em class="badge">${afford}</em>` : ''}</button><button class="big-btn hunt-btn small" data-action="hunt"><span class="hunt-label">CAÇAR</span></button></div>
+    <button class="link-btn" data-action="lair">voltar ao covil</button>
+  </div></div>`
+}
+function pips(f: number) {
+  const layout: Record<number, number[]> = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] }
+  return Array.from({ length: 9 }, (_, i) => `<i class="${layout[f].includes(i) ? 'on' : ''}"></i>`).join('')
+}
+function animateResult() {
+  document.querySelectorAll<HTMLElement>('.count').forEach((el) => {
+    const to = Number(el.dataset.to), start = performance.now()
+    const step = (now: number) => { const k = Math.min(1, (now - start) / 900); el.textContent = fmt(to * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(step) }
+    requestAnimationFrame(step)
+  })
+  document.querySelectorAll<HTMLElement>('.die').forEach((die, i) => {
+    let spins = 0
+    const face = Number(die.dataset.face), stop = 8 + i * 3
+    const iv = setInterval(() => {
+      spins++
+      die.innerHTML = pips(spins >= stop ? face : 1 + Math.floor(Math.random() * 6))
+      if (spins % 2) sfx('dice')
+      if (spins >= stop) { clearInterval(iv); die.classList.remove('rolling'); die.classList.add('landed'); if (i === document.querySelectorAll('.die').length - 1) { document.querySelector('.dice-labels')?.classList.add('show'); sfx('pickup') } }
+    }, 70)
+  })
+}
+
+// ───────────────────────── TREE
+const SPACING = 92
+function treeView() {
+  const owned = (n: TreeNode) => level(save, n.id) > 0
+  const shown = NODES.filter((n) => isRevealed(save, n))
+  const teasers = NODES.filter((n) => !isRevealed(save, n) && n.parent && isRevealed(save, NODE_BY_ID[n.parent]))
+  const links = [...shown, ...teasers].filter((n) => n.parent).map((n) => {
+    const p = NODE_BY_ID[n.parent!]
+    return `<line x1="${p.x * SPACING}" y1="${p.y * SPACING}" x2="${n.x * SPACING}" y2="${n.y * SPACING}" class="${owned(n) ? 'lit' : isRevealed(save, n) ? 'open' : 'fog'} res-${n.res}"/>`
+  }).join('')
+  const nodes = shown.map((n) => {
+    const lv = level(save, n.id)
+    const cls = [owned(n) ? 'owned' : '', isMaxed(save, n) ? 'maxed' : '', canBuy(save, n) ? 'affordable' : '', n.keystone ? 'keystone' : '', n.infinite ? 'infinite' : '', selectedNode === n.id ? 'selected' : ''].join(' ')
+    return `<button class="tnode res-${n.res} ${cls}" style="left:${n.x * SPACING}px;top:${n.y * SPACING}px" data-node="${n.id}" aria-label="${n.name}">${skillIcon(n.icon)}${lv ? `<em>${n.infinite ? lv : lv + '/' + n.max}</em>` : ''}</button>`
+  }).join('')
+  const fog = teasers.map((n) => `<div class="tnode fog" style="left:${n.x * SPACING}px;top:${n.y * SPACING}px">?</div>`).join('')
+  return `
+  <div class="tree-sky"></div>
+  <div class="tree-view" id="tree-view"><div class="tree-world" id="tree-world" style="transform:translate(${pan.x}px,${pan.y}px) scale(${pan.zoom})">
+    <svg class="tree-links" viewBox="-900 -900 1800 1800" width="1800" height="1800">${links}</svg>${fog}${nodes}
+  </div></div>
+  <div class="tree-top"><button class="round-btn" data-action="lair" aria-label="Covil">◂</button><div class="tree-title">Árvore de Sangue</div>${wallet()}<button class="big-btn hunt-btn tiny" data-action="hunt"><span class="hunt-label">CAÇAR</span></button></div>
+  <div class="zoom-btns"><button class="round-btn" data-action="zoom-in" aria-label="Aproximar">+</button><button class="round-btn" data-action="zoom-out" aria-label="Afastar">−</button><button class="round-btn" data-action="center" aria-label="Centralizar">◎</button></div>
+  <div class="node-sheet frame" id="node-sheet">${nodeSheet()}</div>`
+}
+function nodeSheet() {
+  const n = NODE_BY_ID[selectedNode] ?? NODES[0]
+  const lv = level(save, n.id), maxed = isMaxed(save, n), price = priceOf(save, n)
+  const can = canBuy(save, n)
+  const now = lv ? describe(n, lv) : 'Ainda não despertado'
+  const next = maxed ? 'Nível máximo' : describe(n, lv + 1)
+  return `${skillIcon(n.icon, 'big')}
+  <div class="sheet-text"><div class="sheet-tag res-${n.res}">${n.keystone ? 'PODER ÚNICO' : n.infinite ? `INFINITO · NÍVEL ${lv}` : `NÍVEL ${lv}/${n.max}`}</div><h2>${n.name}</h2><p class="now">${now}</p>${maxed ? '' : `<p class="next">▸ ${next}</p>`}</div>
+  <div class="sheet-buy">${maxed ? '<div class="maxed-tag">MÁXIMO</div>' : `<button class="big-btn buy-btn ${can ? '' : 'poor'}" data-action="buy" ${can ? '' : 'disabled'}>${resIcon(n.res)}<span>${fmt(price)}</span></button><button class="link-btn" data-action="buy-max" ${can ? '' : 'disabled'}>comprar máximo</button>`}</div>`
+}
+
+// ───────────────────────── render + canvas
+function render() {
+  app.innerHTML = `<div class="game screen-${screen}"><canvas id="stage"></canvas><div class="ui">${screen === 'lair' ? lairView() : screen === 'hunt' ? huntView() : treeView()}</div>${report ? resultView(report) : ''}</div>`
+  if (report) animateResult()
+  if (screen === 'tree') bindTree()
+  paint(performance.now() / 1000)
+}
+
+function paint(t: number) {
+  const canvas = document.querySelector<HTMLCanvasElement>('#stage'); if (!canvas || screen === 'tree') return
+  const rect = canvas.getBoundingClientRect(), ratio = Math.min(1.5, devicePixelRatio || 1)
+  const w = Math.round(rect.width * ratio), h = Math.round(rect.height * ratio)
+  if (!w || !h) return
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h }
+  const c = canvas.getContext('2d')!
+  if (screen === 'hunt' && hunt) { hunt.setViewport(rect.width, rect.height); drawHunt(c, hunt, t) } else drawLair(c, lairState(save), t)
+}
+
+function toWorld(clientX: number, clientY: number) {
+  const canvas = document.querySelector<HTMLCanvasElement>('#stage')!
+  const r = canvas.getBoundingClientRect(), cam = camera(r.width, r.height)
+  return { x: (clientX - r.left - cam.x) / cam.scale, y: (clientY - r.top - cam.y) / cam.scale }
+}
+
+// ───────────────────────── flow
+function startHunt() {
+  report = null
+  const canvas = document.querySelector<HTMLCanvasElement>('#stage')
+  const rect = canvas?.getBoundingClientRect()
+  hunt = new Hunt(save, rect ? { width: rect.width, height: rect.height } : undefined)
+  screen = 'hunt'
+  sfx('start')
+  render()
+}
+
+function endHunt() {
+  if (!hunt || report) return
+  hunt.finish()
+  report = bankNight(save, hunt)
+  const choices = 3 + Math.floor(computeStats(save.levels).pactChoices)
+  offeredPacts = save.nights >= 2 ? rollPacts(choices) : []
+  sfx(hunt.bossKilled ? 'bosskill' : 'dawn')
+  render()
+}
+
+// ───────────────────────── tree pan / zoom
+function applyPan() { const world = document.getElementById('tree-world'); if (world) world.style.transform = `translate(${pan.x}px,${pan.y}px) scale(${pan.zoom})` }
+function bindTree() {
+  const view = document.getElementById('tree-view')!
+  if (pan.x === 0 && pan.y === 0) { pan.x = view.clientWidth / 2; pan.y = view.clientHeight * 0.4 }
+  applyPan()
+  const pointers = new Map<number, { x: number; y: number }>()
+  let pinch = 0, moved = 0
+  view.addEventListener('pointerdown', (e) => { pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); moved = 0 })
+  view.addEventListener('pointermove', (e) => {
+    const prev = pointers.get(e.pointerId); if (!prev) return
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()], d = Math.hypot(a.x - b.x, a.y - b.y)
+      if (pinch) pan.zoom = Math.max(0.45, Math.min(1.8, pan.zoom * d / pinch))
+      pinch = d
+    } else { pan.x += e.clientX - prev.x; pan.y += e.clientY - prev.y; moved += Math.abs(e.clientX - prev.x) + Math.abs(e.clientY - prev.y) }
+    applyPan()
+  })
+  const up = (e: PointerEvent) => { pointers.delete(e.pointerId); if (pointers.size < 2) pinch = 0 }
+  view.addEventListener('pointerup', up); view.addEventListener('pointercancel', up); view.addEventListener('pointerleave', up)
+  view.addEventListener('wheel', (e) => { e.preventDefault(); pan.zoom = Math.max(0.45, Math.min(1.8, pan.zoom * (e.deltaY > 0 ? 0.9 : 1.1))); applyPan() }, { passive: false })
+  view.addEventListener('click', (e) => { if (moved > 8) { e.stopPropagation(); e.preventDefault() } }, true)
+}
+function refreshTree() {
+  const keep = { ...pan }
+  render()
+  pan = keep
+  applyPan()
+}
+
+// ───────────────────────── input
+app.addEventListener('click', (e) => {
+  const el = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-city],[data-node],[data-pact]')
+  if (!el || (el as HTMLButtonElement).disabled) return
+  if (el.dataset.city) { save.city = Number(el.dataset.city); persist(save); sfx('click'); render(); return }
+  if (el.dataset.node) { selectedNode = el.dataset.node; sfx('click'); refreshTree(); return }
+  if (el.dataset.pact) {
+    save.pact = el.dataset.pact as PactId; persist(save); sfx('pact')
+    document.querySelectorAll('.pact-card').forEach((c) => c.classList.toggle('chosen', c === el))
+    return
+  }
+  switch (el.dataset.action) {
+    case 'hunt': startHunt(); break
+    case 'flee': endHunt(); break
+    case 'tree': report = null; screen = 'tree'; sfx('click'); render(); break
+    case 'lair': report = null; hunt = null; screen = 'lair'; sfx('click'); render(); break
+    case 'mute': save.muted = !save.muted; setMuted(save.muted); persist(save); render(); break
+    case 'buy': if (buyNode(save, selectedNode)) { sfx('buy'); refreshTree(); document.querySelector(`[data-node="${selectedNode}"]`)?.classList.add('just-bought') } break
+    case 'buy-max': { let k = 0; while (k < 500 && buyNode(save, selectedNode)) k++; if (k) { sfx('buy'); refreshTree(); document.querySelector(`[data-node="${selectedNode}"]`)?.classList.add('just-bought') } break }
+    case 'zoom-in': pan.zoom = Math.min(1.8, pan.zoom * 1.2); applyPan(); break
+    case 'zoom-out': pan.zoom = Math.max(0.45, pan.zoom / 1.2); applyPan(); break
+    case 'center': pan = { x: 0, y: 0, zoom: 1 }; render(); break
+  }
+})
+
+let touching = false
+app.addEventListener('pointerdown', (e) => {
+  if (screen !== 'hunt' || !hunt || report || !(e.target instanceof HTMLCanvasElement)) return
+  e.preventDefault()
+  const p = toWorld(e.clientX, e.clientY)
+  touching = true
+  hunt.setAura(p.x, p.y, true)
+  hunt.tap(p.x, p.y)
+})
+app.addEventListener('pointermove', (e) => {
+  if (screen !== 'hunt' || !hunt || report) return
+  const p = toWorld(e.clientX, e.clientY)
+  // mouse: the aura follows the cursor over the city; touch: only while the finger is down
+  const on = e.pointerType === 'mouse' ? e.target instanceof HTMLCanvasElement : touching
+  hunt.setAura(p.x, p.y, on)
+})
+const release = (e: PointerEvent) => { touching = false; if (hunt && e.pointerType !== 'mouse') hunt.auraOn = false }
+window.addEventListener('pointerup', release)
+window.addEventListener('pointercancel', release)
+window.addEventListener('keydown', (e) => { if (e.code === 'Space' && screen !== 'hunt') { e.preventDefault(); startHunt() } })
+document.addEventListener('visibilitychange', () => persist(save))
+window.addEventListener('resize', () => { if (screen === 'tree') refreshTree() })
+
+function frame(now: number) {
+  const dt = Math.min(0.05, (now - lastFrame) / 1000); lastFrame = now
+  if (screen === 'hunt' && hunt && !report) {
+    hunt.update(dt)
+    for (const s of hunt.sounds) {
+      sfx(s, hunt.combo)
+      if (s === 'boss') banner(`☠ ${hunt.city.boss.toUpperCase()} APARECEU`, 'boss')
+      if (s === 'bosskill') banner('CHEFE DERROTADO!', 'gold')
+      if (s === 'shiny') banner('✦ HUMANO SHINY ✦', 'gold')
+    }
+    hunt.sounds.length = 0
+    if (now - lastHud > 90) { updateHud(); lastHud = now }
+    if (hunt.ended) endHunt()
+  }
+  if (screen !== 'tree') paint(now / 1000)
   requestAnimationFrame(frame)
 }
-app.addEventListener('click',event=>{
-  const target=event.target as HTMLElement,button=target.closest<HTMLButtonElement>('button');if(!button||button.disabled)return
-  if(button.dataset.screen){if(active())return;screen=button.dataset.screen as typeof screen;render();return}
-  if(button.dataset.branch){branch=button.dataset.branch as typeof branch;const first=SKILLS.find(s=>visible(s)&&(branch==='roots'?!s.requires:s.branch===branch));if(first)selected=first.id;render();return}
-  if(button.dataset.skill){selected=button.dataset.skill;render();return}
-  if(button.dataset.city){const id=Number(button.dataset.city);if(!active()&&id<=save.unlocked&&Math.floor(id/5)===save.era){save.district=id;night=null;ambient=new Night(save);persist(save);render()}return}
-  switch(button.dataset.action){
-    case 'start':{const rect=document.querySelector('#world')!.getBoundingClientRect();night=new Night(save,{width:rect.width,height:rect.height});render();sound('mission');break}
-    case 'retreat':night?.finish();ambient=new Night(save);render();break
-    case 'power':if(night?.usePower())sound('pulse');updateHUD();break
-    case 'buy':if(buy(save,selected)){sound('buy');branch=SKILLS.find(s=>s.id===selected)!.branch;render()}break
-    case 'hibernate':if(hibernate(save)){night=null;ambient=new Night(save);screen='upgrades';branch='roots';selected='moon';render()}break
-    case 'mute':save.muted=!save.muted;persist(save);button.textContent=save.muted?'♫̸':'♫';break
-  }
-})
-app.addEventListener('pointerdown',event=>{
-  if(!(event.target instanceof HTMLCanvasElement)||!active())return
-  event.preventDefault();held=true;pointerId=event.pointerId;aim={x:event.clientX,y:event.clientY};event.target.setPointerCapture(event.pointerId);strike()
-})
-app.addEventListener('pointermove',event=>{if(held&&event.pointerId===pointerId)aim={x:event.clientX,y:event.clientY}})
-const release=()=>{held=false;pointerId=null;if(night)night.focusUntil=0}
-window.addEventListener('pointerup',release);window.addEventListener('pointercancel',release);window.addEventListener('blur',release)
-document.addEventListener('visibilitychange',()=>{release();persist(save)})
-window.addEventListener('resize',()=>{release();if(screen==='upgrades')render()})
-window.addEventListener('keydown',event=>{if(event.code==='Space'&&active()){event.preventDefault();if(night!.usePower())sound('pulse')}})
-render();requestAnimationFrame(frame)
+
+render()
+requestAnimationFrame(frame)
+
+// Dev-only handle for testing from the console (never in production builds).
+if (import.meta.env.DEV) (window as unknown as { __cb: unknown }).__cb = { get save() { return save }, render, persist: () => persist(save) }

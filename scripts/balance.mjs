@@ -1,24 +1,67 @@
+// Balance simulator: a scripted player hunts night after night using the real game code.
+//   node scripts/balance.mjs            → summary per city
+//   node scripts/balance.mjs verbose    → every night
 import esbuild from 'esbuild'
-const memory=new Map();globalThis.localStorage={getItem:k=>memory.get(k)||null,setItem:(k,v)=>memory.set(k,v)}
-let seed=12;Math.random=()=>{seed=(seed*1664525+1013904223)>>>0;return seed/4294967296}
-const build=await esbuild.build({stdin:{contents:"export * from './src/incremental/game.ts'; export * from './src/incremental/data.ts'",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false})
-const {Night,load,buy,available,SKILLS,skillCost}=await import('data:text/javascript;base64,'+Buffer.from(build.outputFiles[0].contents).toString('base64'))
-function run(save){const n=new Night(save,{width:390,height:488});while(!n.ended){const named=n.humans.find(h=>h.named);let target=n.humans.filter(h=>h.windup<=0&&h.kind!=='hunter').sort((a,b)=>a.hp-b.hp)[0];if(named&&named.windup<=0)target=named;if(target)n.click(target.x,target.y-30,1);if(n.charge>=100)n.usePower();n.update(.05)}return n}
-const save=load();let totalSeconds=0
-for(let city=0;city<2;city++){
-  save.district=city;let nights=0
-  while(!save.cleared[city]&&nights<50){
-    const n=run(save);nights++;totalSeconds+=n.elapsed
-    const priorities=['fang','moon','thrall','training','bank','mist','reach','pulse','haste','stalk','drain','shock','surge','vigor','cleave','pack','dusk','frenzy']
-    for(let purchase=0;purchase<6;purchase++){
-      const candidates=SKILLS.filter(s=>priorities.includes(s.id)&&available(save,s.id)&&save.blood>=skillCost(s,save.levels[s.id]||0))
-      candidates.sort((a,b)=>skillCost(a,save.levels[a.id]||0)-skillCost(b,save.levels[b.id]||0));if(!candidates.length)break;buy(save,candidates[0].id)
+const memory = new Map(); globalThis.localStorage = { getItem: (k) => memory.get(k) || null, setItem: (k, v) => memory.set(k, v), removeItem: (k) => memory.delete(k) }
+let seed = 7; Math.random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296 }
+const build = await esbuild.build({ stdin: { contents: "export * from './src/game/hunt.ts'; export * from './src/game/save.ts'; export * from './src/game/progress.ts'; export * from './src/game/night-end.ts'; export * from './src/game/tree.ts'; export * from './src/game/data.ts'", resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'esm', write: false })
+const G = await import('data:text/javascript;base64,' + Buffer.from(build.outputFiles[0].contents).toString('base64'))
+const verbose = process.argv.includes('verbose')
+const SHOP_SECONDS = 12 // time a player spends between nights
+
+function playNight(save) {
+  const h = new G.Hunt(save, { width: 900, height: 500 })
+  let tapClock = 0
+  while (!h.ended) {
+    // aim at the densest spot, the boss, or loot about to expire
+    const drop = h.drops.find((d) => !d.pulled && d.life < 2.5)
+    let tx = h.auraX, ty = h.auraY
+    if (h.boss && Math.random() < 0.6) { tx = h.boss.x; ty = h.boss.y - 26 }
+    else if (drop && Math.random() < 0.5) { tx = drop.x; ty = drop.y - 20 }
+    else if (h.humans.length) {
+      let best = h.humans[0], bestN = -1
+      for (let i = 0; i < Math.min(12, h.humans.length); i++) {
+        const c = h.humans[Math.floor(Math.random() * h.humans.length)]
+        const n = h.humans.filter((o) => Math.hypot(o.x - c.x, o.y - c.y) < h.radius).length
+        if (n > bestN) { best = c; bestN = n }
+      }
+      tx = best.x; ty = best.y - 26
     }
-    if(nights<=2||n.qualified)console.log(JSON.stringify({city:city+1,night:nights,captures:n.captures,domination:save.progress[city],contracts:save.contracts[city]||0,cleared:n.qualified}))
+    // cursor moves at human speed (~900 px/s)
+    const dx = tx - h.auraX, dy = ty - h.auraY, d = Math.hypot(dx, dy), step = 900 * 0.05
+    h.setAura(d > step ? h.auraX + dx / d * step : tx, d > step ? h.auraY + dy / d * step : ty, true)
+    tapClock += 0.05
+    if (tapClock > 0.25) { tapClock = 0; h.tap(h.auraX, h.auraY) }
+    h.update(0.05)
   }
-  console.log('Cidade',city+1,'noites',nights,'tempo ideal acumulado',Math.round(totalSeconds),'s','níveis',Object.values(save.levels).reduce((a,b)=>a+b,0))
-  if(!save.cleared[city])throw new Error('Progressão travada')
+  return h
 }
-const late={...save,district:19,era:3,relics:3,levels:Object.fromEntries(SKILLS.map(s=>[s.id,s.max])),contracts:{19:7},progress:{19:100000}}
-const finale=run(late);console.log('Build máxima:',finale.captures,'capturas; vitória:',finale.won)
-if(!finale.won)throw new Error('Objetivo final não alcançável com build máxima')
+
+function shop(save) {
+  for (let k = 0; k < 200; k++) {
+    const opts = G.NODES.filter((n) => G.canBuy(save, n)).sort((a, b) => G.priceOf(save, a) / (save.res[a.res] + 1) - G.priceOf(save, b) / (save.res[b.res] + 1))
+    if (!opts.length) break
+    G.buyNode(save, opts[0].id)
+  }
+}
+
+const save = G.load()
+let clock = 0, nights = 0
+const cityStart = {}
+const lines = []
+while (!save.victory && nights < 450) {
+  const city = save.city
+  cityStart[city] ??= { t: clock, n: nights }
+  if (!save.pact && nights > 0) save.pact = G.rollPacts(3)[0]
+  const h = playNight(save)
+  const report = G.bankNight(save, h)
+  nights++; clock += h.duration + SHOP_SECONDS
+  shop(save)
+  if (verbose) console.log(`#${nights} c${city + 1} ${h.captures} cap, terror ${h.terror}/${h.terrorNeeded}, boss ${h.bossSpawned ? (h.bossKilled ? 'KILLED' : 'alive') : '-'}, +${G.fmtShort(report.total.blood)} blood, teeth ${Math.floor(report.total.teeth)}, shard ${Math.floor(report.total.shard)}, pure ${report.total.pure}, shinies ${h.shinies}, levels ${G.totalLevels(save)}, dmg ${G.fmtShort(h.damage)} x${h.tickRate.toFixed(1)}/s r${h.radius}, bossHp ${G.fmtShort(h.city.bossHp)}, humanHp ${G.fmtShort(h.humanHp)}`)
+  if (report.outcome !== 'none') {
+    const s = cityStart[city]
+    lines.push(`Cidade ${String(city + 1).padStart(2)} ${G.CITIES[city].name.padEnd(20)} ${String(nights - s.n).padStart(3)} noites  ${(Math.round((clock - s.t) / 6) / 10).toString().padStart(5)} min   total ${Math.round(clock / 60)} min   níveis ${G.totalLevels(save)}   ${report.outcome === 'era' ? '★ nova era' : ''}`)
+  }
+}
+console.log(lines.join('\n'))
+console.log(`\n${save.victory ? 'VITÓRIA' : 'SEM VITÓRIA'} em ${nights} noites, ~${Math.round(clock / 60)} min de jogo. Níveis comprados ${G.totalLevels(save)}/${G.NODES.filter((n) => !n.infinite).reduce((a, n) => a + n.max, 0)} finitos. Shinies ${save.shinies}.`)

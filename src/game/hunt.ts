@@ -1,0 +1,331 @@
+// One night of hunting: a short, loud, loot-filled run. Pure simulation (no DOM) — the renderer and UI read it.
+import { CITIES, type City, type PactId, type Resource } from './data'
+import { computeStats, type Stats } from './tree'
+import type { Save } from './save'
+import { camera } from '../viewport'
+
+export type Kind = 'common' | 'runner' | 'guard' | 'rare' | 'boss'
+export interface Human {
+  id: number; x: number; y: number; vx: number; vy: number; hp: number; maxHp: number
+  kind: Kind; shiny: boolean; flash: number; panic: number; life: number
+}
+export type DropType = 'vial' | 'teeth' | 'shard' | 'pure'
+export interface Drop { id: number; x: number; y: number; z: number; vz: number; type: DropType; amount: number; life: number; pulled: boolean }
+export interface FloatText { x: number; y: number; vy: number; life: number; text: string; color: string; size: number }
+export interface Spark { x: number; y: number; vx: number; vy: number; life: number; color: string; size: number }
+export interface Fx { x: number; y: number; row: number; age: number; duration: number; size: number }
+export interface Loot { blood: number; teeth: number; shard: number; pure: number }
+
+const rand = (a: number, b: number) => a + Math.random() * (b - a)
+const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
+let NEXT = 1
+
+export class Hunt {
+  readonly city: City
+  readonly stats: Stats
+  readonly pact: PactId | null
+  humans: Human[] = []
+  drops: Drop[] = []
+  texts: FloatText[] = []
+  sparks: Spark[] = []
+  fx: Fx[] = []
+  loot: Loot = { blood: 0, teeth: 0, shard: 0, pure: 0 }
+  elapsed = 0
+  duration: number
+  captures = 0
+  shinies = 0
+  crits = 0
+  combo = 0
+  bestCombo = 0
+  comboClock = 0
+  terror = 0
+  boss: Human | null = null
+  bossSpawned = false
+  bossKilled = false
+  ended = false
+  shake = 0
+  flashRed = 0
+  sounds: string[] = []
+  // aura / vampire
+  auraX = 500; auraY = 340; auraOn = false
+  vampireX = 500; vampireY = 360
+  bite = 0
+  private tickClock = 0
+  private spawnClock = 0
+  private batClock = 0
+  private biteCooldown = 0
+  private bounds = { left: 120, right: 880, top: 190, bottom: 490 }
+
+  constructor(private save: Save, viewport?: { width: number; height: number }) {
+    this.city = CITIES[save.city]
+    this.stats = computeStats(save.levels)
+    this.pact = save.pact
+    if (viewport) this.setViewport(viewport.width, viewport.height)
+    this.duration = 12 + this.stats.nightTime + (this.pact === 'longnight' ? 6 : 0)
+    for (let i = 0; i < 10 + this.city.slot * 2; i++) this.spawn()
+  }
+
+  // ───────── derived numbers
+  get echoMult() { return Math.pow(1.3, this.save.echoes) }
+  get damage() {
+    const combo = 1 + (this.stats.comboDmg / 100) * Math.min(10, Math.floor(this.combo / 10))
+    return (1 + this.stats.auraDmg) * (1 + this.stats.auraPct / 100) * Math.pow(1.12, this.stats.dmgMult) * this.echoMult * combo * (this.pact === 'fullmoon' ? 1.6 : 1)
+  }
+  get tickRate() { return 4 * (1 + this.stats.auraRate / 100) }
+  get radius() { return Math.min(150, 48 + this.stats.auraRadius) }
+  get critChance() { return Math.min(0.9, 0.05 + this.stats.critChance / 100 + (this.pact === 'frenzy' ? 0.25 : 0)) }
+  get critMult() { return 2 + this.stats.critMult }
+  get maxPop() { return Math.min(260, Math.round((22 + this.stats.maxPop) * (this.pact === 'horde' ? 1.7 : 1))) }
+  get lootMult() { return (1 + this.stats.lootPct / 100) * (this.pact === 'harvest' ? 2 : 1) }
+  get bloodPer() { return this.city.blood * (1 + this.stats.bloodPct / 100) * Math.pow(1.1, this.stats.bloodMult) * this.echoMult }
+  get terrorNeeded() { return Math.ceil(this.city.terror * (1 - Math.min(60, this.stats.terrorPct) / 100)) }
+  get bats() { return this.stats.bats + (this.pact === 'bats' ? 4 : 0) }
+  get remaining() { return Math.max(0, this.duration - this.elapsed) }
+  get humanHp() { return Math.max(1, this.city.humanHp * (1 - Math.min(75, this.stats.weaken) / 100)) }
+
+  setViewport(width: number, height: number) {
+    const v = camera(width, Math.max(1, height))
+    this.bounds = { left: Math.max(60, v.left + 30), right: Math.min(940, v.right - 30), top: Math.max(185, v.top + 70), bottom: Math.min(500, v.bottom - 30) }
+  }
+
+  // ───────── spawning
+  spawn(kind?: Kind) {
+    if (!kind && this.humans.length >= this.maxPop) return
+    const b = this.bounds
+    const r = Math.random()
+    const k: Kind = kind ?? (r < this.city.guardShare ? 'guard' : r < 0.26 ? 'runner' : r < 0.33 ? 'rare' : 'common')
+    const shinyChance = (0.004 + this.stats.shinyChance / 100) * (this.pact === 'goldfever' ? 4 : 1)
+    const shiny = k !== 'boss' && Math.random() < shinyChance
+    const base = k === 'boss' ? this.city.bossHp * (1 - Math.min(75, this.stats.weaken) / 100) : this.humanHp * (k === 'guard' ? 3 : k === 'rare' ? 1.6 : k === 'runner' ? 0.8 : 1)
+    const hp = base * (shiny ? 2.5 : 1)
+    const fromEdge = this.elapsed > 0.2 && k !== 'boss'
+    const x = fromEdge ? (Math.random() < 0.5 ? b.left : b.right) : rand(b.left, b.right)
+    const y = rand(b.top, b.bottom)
+    const h: Human = { id: NEXT++, x, y, vx: rand(-20, 20), vy: rand(-12, 12), hp, maxHp: hp, kind: k, shiny, flash: 0, panic: 0, life: 0 }
+    if (k === 'boss') { h.x = (b.left + b.right) / 2; h.y = b.top + 20; this.boss = h }
+    this.humans.push(h)
+    if (shiny) this.sounds.push('shiny')
+  }
+
+  // ───────── input
+  setAura(x: number, y: number, on: boolean) { this.auraX = x; this.auraY = y; this.auraOn = on }
+
+  /** Tap/click: a heavy bite at the point. */
+  tap(x: number, y: number) {
+    if (this.ended || this.biteCooldown > 0) return
+    this.biteCooldown = 0.18
+    this.bite = 0.22
+    this.auraX = x; this.auraY = y
+    const r = 26 + this.stats.biteRadius
+    const dmg = this.damage * (3 + this.stats.biteDmg)
+    let hit = false
+    for (const h of [...this.humans]) if (Math.hypot(h.x - x, h.y - 28 - y) < r + 16) { this.hit(h, dmg, true); hit = true }
+    this.fx.push({ x, y, row: 1, age: 0, duration: 0.35, size: 70 })
+    if (hit) this.sounds.push('bite')
+  }
+
+  // ───────── simulation
+  update(dt: number) {
+    if (this.ended) return
+    dt = Math.min(0.05, dt)
+    this.elapsed += dt
+    this.biteCooldown = Math.max(0, this.biteCooldown - dt)
+    this.bite = Math.max(0, this.bite - dt)
+    this.shake = Math.max(0, this.shake - dt * 18)
+    this.flashRed = Math.max(0, this.flashRed - dt * 2)
+    this.comboClock -= dt
+    if (this.comboClock <= 0) this.combo = 0
+
+    // waves: the city fills up as the night goes on
+    const wave = 1 + 1.6 * (this.elapsed / this.duration)
+    const rate = (2.4 + this.city.slot * 0.35) * (1 + this.stats.spawnPct / 100) * wave * (this.pact === 'horde' ? 1.7 : 1)
+    this.spawnClock += dt
+    while (this.spawnClock > 1 / rate) { this.spawnClock -= 1 / rate; this.spawn() }
+
+    // vampire follows the aura
+    this.vampireX += (this.auraX - this.vampireX) * Math.min(1, dt * 8)
+    this.vampireY += (this.auraY + 26 - this.vampireY) * Math.min(1, dt * 8)
+
+    // aura ticks
+    if (this.auraOn) {
+      this.tickClock += dt
+      const gap = 1 / this.tickRate
+      while (this.tickClock >= gap) {
+        this.tickClock -= gap
+        const r = this.radius
+        for (const h of [...this.humans]) if (Math.hypot(h.x - this.auraX, (h.y - 26) - this.auraY) < r + 12) this.hit(h, this.damage, false)
+      }
+    }
+
+    // bats
+    const bats = this.bats
+    if (bats > 0) {
+      this.batClock += dt
+      const gap = 0.9 / (1 + this.stats.batRate / 100) / bats
+      while (this.batClock >= gap) {
+        this.batClock -= gap
+        const target = this.boss && Math.random() < 0.35 ? this.boss : this.humans[Math.floor(Math.random() * this.humans.length)]
+        if (target) {
+          this.hit(target, this.damage * 0.6 * (1 + this.stats.batDmg / 100) * (target.kind === 'boss' ? 0.5 : 1), false, '#6be7d5')
+          this.fx.push({ x: target.x, y: target.y - 30, row: 4, age: 0, duration: 0.4, size: 40 })
+        }
+      }
+    }
+
+    // humans wander and flee from the aura
+    const b = this.bounds
+    for (const h of this.humans) {
+      h.life += dt; h.flash = Math.max(0, h.flash - dt); h.panic = Math.max(0, h.panic - dt)
+      const dx = h.x - this.auraX, dy = h.y - 26 - this.auraY, d = Math.hypot(dx, dy)
+      if (this.auraOn && d < this.radius * 2.2 && h.kind !== 'boss') { h.vx += (dx / (d || 1)) * 60 * dt; h.vy += (dy / (d || 1)) * 40 * dt }
+      const speed = (h.kind === 'runner' ? 1.9 : h.kind === 'guard' ? 0.7 : h.kind === 'boss' ? 0.55 : 1) * (h.shiny ? 2.2 : 1) * (h.panic > 0 ? 1.8 : 1)
+      h.x += h.vx * speed * dt; h.y += h.vy * speed * dt
+      if (h.x < b.left || h.x > b.right) h.vx *= -1
+      if (h.y < b.top || h.y > b.bottom) h.vy *= -1
+      h.x = clamp(h.x, b.left, b.right); h.y = clamp(h.y, b.top, b.bottom)
+      h.vx = clamp(h.vx + rand(-12, 12) * dt, -40, 40); h.vy = clamp(h.vy + rand(-8, 8) * dt, -24, 24)
+    }
+
+    // loot on the ground: bounce, magnet, expire
+    const pickup = this.radius * 0.6 + 30 + this.stats.magnet
+    for (const d of this.drops) {
+      d.life -= dt
+      d.vz -= 520 * dt; d.z = Math.max(0, d.z + d.vz * dt); if (d.z === 0) d.vz = Math.abs(d.vz) > 60 ? -d.vz * 0.35 : 0
+      const dist = Math.hypot(d.x - this.auraX, d.y - 20 - this.auraY)
+      if (this.auraOn && dist < pickup) d.pulled = true
+      if (d.pulled) {
+        d.x += (this.auraX - d.x) * Math.min(1, dt * 12); d.y += (this.auraY + 20 - d.y) * Math.min(1, dt * 12)
+        if (Math.hypot(d.x - this.auraX, d.y - 20 - this.auraY) < 16) { this.collect(d); d.life = -1 }
+      }
+    }
+    this.drops = this.drops.filter((d) => d.life > 0)
+
+    for (const t of this.texts) { t.y += t.vy * dt; t.vy *= 0.94; t.life -= dt }
+    this.texts = this.texts.filter((t) => t.life > 0).slice(-60)
+    for (const p of this.sparks) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 260 * dt; p.life -= dt }
+    this.sparks = this.sparks.filter((p) => p.life > 0).slice(-260)
+    for (const f of this.fx) f.age += dt
+    this.fx = this.fx.filter((f) => f.age < f.duration).slice(-80)
+
+    if (this.elapsed >= this.duration) this.finish()
+  }
+
+  hit(h: Human, base: number, bite: boolean, color?: string) {
+    if (!this.humans.includes(h)) return
+    const crit = Math.random() < this.critChance
+    let dmg = base * (crit ? this.critMult : 1)
+    if (h.kind === 'boss') dmg *= (1 + this.stats.bossDmg / 100) * (this.pact === 'hunter' ? 2.5 : 1)
+    h.hp -= dmg; h.flash = 0.12; h.panic = 1
+    if (crit) this.crits++
+    if (crit || bite || h.kind === 'boss') this.float(h.x + rand(-10, 10), h.y - 58, fmtShort(dmg) + (crit ? '!' : ''), crit ? '#ffd35c' : color ?? '#ffffff', crit ? 20 : 14)
+    if (h.hp <= 0) this.capture(h)
+  }
+
+  private capture(h: Human) {
+    const i = this.humans.indexOf(h)
+    if (i < 0) return
+    this.humans.splice(i, 1)
+    this.fx.push({ x: h.x, y: h.y - 30, row: 1, age: 0, duration: 0.5, size: h.kind === 'boss' ? 160 : 70 })
+    if (h.kind === 'boss') return this.killBoss(h)
+    this.captures++
+    this.terror++
+    this.combo++; this.bestCombo = Math.max(this.bestCombo, this.combo); this.comboClock = 1.3
+    const kindMult = h.kind === 'guard' ? 2.5 : h.kind === 'rare' ? 1.8 : h.kind === 'runner' ? 1.3 : 1
+    const blood = this.bloodPer * kindMult
+    this.loot.blood += blood
+    this.float(h.x, h.y - 44, '+' + fmtShort(blood), '#ff5470', 13)
+    this.burst(h.x, h.y - 24, h.shiny ? '#ffd35c' : '#e0183a', h.shiny ? 22 : 8)
+    this.sounds.push('capture')
+    // loot rolls
+    const s = this.stats
+    if (Math.random() < 0.04 + s.vialChance / 100) this.drop(h, 'vial', blood * 5)
+    if (Math.random() < s.teethChance / 100) this.drop(h, 'teeth', 1)
+    if ((h.kind === 'rare' && Math.random() < 0.3) || Math.random() < s.shardChance / 100) this.drop(h, 'shard', 1)
+    if (h.shiny) {
+      this.shinies++
+      const bonus = 1 + s.shinyValue
+      for (let k = 0; k < 4; k++) this.drop(h, 'vial', blood * 5 * bonus)
+      this.drop(h, 'teeth', Math.ceil(3 * bonus))
+      if (Math.random() < 0.25) this.drop(h, 'pure', 1)
+      this.shake = 6
+      this.sounds.push('jackpot')
+    }
+    // explosions
+    if (Math.random() < s.explodeChance / 100) this.explode(h.x, h.y, 0)
+    // boss summon
+    if (!this.bossSpawned && this.terror >= this.terrorNeeded) {
+      this.bossSpawned = true
+      this.spawn('boss')
+      this.flashRed = 1
+      this.shake = 10
+      this.sounds.push('boss')
+    }
+  }
+
+  private explode(x: number, y: number, depth: number) {
+    this.fx.push({ x, y: y - 20, row: 3, age: 0, duration: 0.55, size: 150 })
+    this.shake = Math.max(this.shake, 4)
+    this.sounds.push('boom')
+    const dmg = this.damage * (2 + this.stats.explodeDmg)
+    for (const h of [...this.humans]) {
+      if (h.kind !== 'boss' && Math.hypot(h.x - x, h.y - y) < 70) {
+        const before = this.captures
+        this.hit(h, dmg, false, '#ff9a4a')
+        if (this.stats.chain > 0 && depth < 3 && this.captures > before && Math.random() < 0.25) this.explode(h.x, h.y, depth + 1)
+      }
+    }
+  }
+
+  private killBoss(h: Human) {
+    this.bossKilled = true
+    this.boss = null
+    this.shake = 14
+    this.flashRed = 0.6
+    this.sounds.push('bosskill')
+    const blood = this.bloodPer * 60
+    this.loot.blood += blood
+    this.float(h.x, h.y - 80, '+' + fmtShort(blood), '#ff5470', 26)
+    for (let k = 0; k < 8; k++) this.drop(h, 'vial', this.bloodPer * 8)
+    for (let k = 0; k < 4; k++) this.drop(h, 'shard', 2 + this.city.era)
+    this.drop(h, 'pure', 1 + Math.floor(this.city.index / 5))
+    this.burst(h.x, h.y - 30, '#ffd35c', 60)
+  }
+
+  private drop(h: Human, type: DropType, amount: number) {
+    const life = 4.5 + this.stats.dropLife
+    const mult = type === 'vial' ? this.lootMult : type === 'pure' ? 1 : Math.sqrt(this.lootMult)
+    this.drops.push({ id: NEXT++, x: h.x + rand(-26, 26), y: h.y + rand(-10, 10), z: 10, vz: rand(160, 260), type, amount: amount * mult, life, pulled: false })
+  }
+
+  private collect(d: Drop) {
+    const key: Resource = d.type === 'vial' ? 'blood' : d.type
+    this.loot[key] += d.amount
+    const color = d.type === 'vial' ? '#ff5470' : d.type === 'teeth' ? '#ffd35c' : d.type === 'shard' ? '#c68bff' : '#ffffff'
+    this.float(this.auraX, this.auraY - 30, '+' + fmtShort(d.amount) + (d.type === 'vial' ? '' : d.type === 'teeth' ? ' ▲' : d.type === 'shard' ? ' ◆' : ' ✦'), color, d.type === 'pure' ? 22 : 15)
+    this.sounds.push(d.type === 'pure' ? 'pure' : 'pickup')
+  }
+
+  private float(x: number, y: number, text: string, color: string, size: number) {
+    this.texts.push({ x, y, vy: -60, life: 0.9, text, color, size })
+  }
+
+  private burst(x: number, y: number, color: string, n: number) {
+    for (let i = 0; i < n; i++) this.sparks.push({ x, y, vx: rand(-110, 110), vy: rand(-160, -20), life: rand(0.3, 0.8), color, size: rand(2, 5) })
+  }
+
+  finish() {
+    if (this.ended) return
+    this.ended = true
+    // everything still on the ground at dawn is swept up at half value
+    for (const d of this.drops) { d.amount *= 0.5; const key: Resource = d.type === 'vial' ? 'blood' : d.type; this.loot[key] += d.amount }
+    this.drops = []
+  }
+}
+
+export function fmtShort(n: number): string {
+  if (n < 1000) return n < 10 && n % 1 ? n.toFixed(1) : String(Math.floor(n))
+  const units = ['K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc']
+  let u = -1
+  while (n >= 1000 && u < units.length - 1) { n /= 1000; u++ }
+  return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : Math.floor(n).toString()) + units[u]
+}

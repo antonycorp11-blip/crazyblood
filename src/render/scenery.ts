@@ -1,30 +1,29 @@
-import { ERAS } from './incremental/data'
-import type { Human, Night } from './incremental/game'
-
-import { camera, W, H } from './viewport'
-const cache=new Map<number,HTMLCanvasElement>()
+// Shared world art: sprite atlases, city scenery (from the era/city index) and ambient activity.
+import { ERAS } from '../game/data'
+import { W, H } from '../viewport'
+export const cache=new Map<number,HTMLCanvasElement>()
 const spriteFiles={humans:'humans.png',vampires:'vampires.png',props:'city-props.png',terrain:'terrain.png',effects:'effects.png',sky:'day-night.png'} as const
-const sprites={} as Record<keyof typeof spriteFiles,HTMLImageElement>
+export const sprites={} as Record<keyof typeof spriteFiles,HTMLImageElement>
 for(const key of Object.keys(spriteFiles) as Array<keyof typeof spriteFiles>){
   const img=new Image()
   img.onload=()=>cache.clear()
   img.src='/assets/sprites/'+spriteFiles[key]
   sprites[key]=img
 }
-const ready=(img:HTMLImageElement)=>img.complete&&img.naturalWidth>0
-const humanAtlas=()=>sprites.humans
-const effect=(c:CanvasRenderingContext2D,row:number,frame:number,x:number,y:number,size:number)=>{
+export const ready=(img:HTMLImageElement)=>img.complete&&img.naturalWidth>0
+export const humanAtlas=()=>sprites.humans
+export const effect=(c:CanvasRenderingContext2D,row:number,frame:number,x:number,y:number,size:number)=>{
   if(!ready(sprites.effects))return
   c.drawImage(sprites.effects,Math.floor(frame)%8*64,row*64,64,64,x-size/2,y-size/2,size,size)
 }
-const prop=(c:CanvasRenderingContext2D,era:number,variant:number,x:number,y:number,size:number)=>{
+export const prop=(c:CanvasRenderingContext2D,era:number,variant:number,x:number,y:number,size:number)=>{
   if(!ready(sprites.props))return false
   const height=size*.9
   c.drawImage(sprites.props,variant*160,era*144,160,144,x-size/2,y-height,size,height)
   return true
 }
-const poly=(c:CanvasRenderingContext2D,points:number[][],color:string)=>{c.fillStyle=color;c.beginPath();c.moveTo(points[0][0],points[0][1]);for(let i=1;i<points.length;i++)c.lineTo(points[i][0],points[i][1]);c.closePath();c.fill()}
-const rect=(c:CanvasRenderingContext2D,x:number,y:number,w:number,h:number,color:string)=>{c.fillStyle=color;c.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h))}
+export const poly=(c:CanvasRenderingContext2D,points:number[][],color:string)=>{c.fillStyle=color;c.beginPath();c.moveTo(points[0][0],points[0][1]);for(let i=1;i<points.length;i++)c.lineTo(points[i][0],points[i][1]);c.closePath();c.fill()}
+export const rect=(c:CanvasRenderingContext2D,x:number,y:number,w:number,h:number,color:string)=>{c.fillStyle=color;c.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h))}
 const diamond=(c:CanvasRenderingContext2D,x:number,y:number,color:string)=>poly(c,[[x,y-18],[x+36,y],[x,y+18],[x-36,y]],color)
 function building(c:CanvasRenderingContext2D,x:number,y:number,w:number,h:number,era:number,variant:number){
   const p=[['#755c50','#493c4a','#b28b65'],['#6b5167','#352b49','#aa6e71'],['#436077','#263b56','#5a9db0'],['#294565','#18233f','#56bed1']][era]
@@ -59,7 +58,7 @@ function building(c:CanvasRenderingContext2D,x:number,y:number,w:number,h:number
   }
   rect(c,x-w*.52,y+1,w+12,5,'#191a31')
 }
-function scenery(index:number){
+export function scenery(index:number){
   if(cache.has(index))return cache.get(index)!
   const canvas=document.createElement('canvas');canvas.width=W;canvas.height=H
   const c=canvas.getContext('2d')!;const era=Math.floor(index/5),city=index%5
@@ -132,7 +131,7 @@ function scenery(index:number){
   }
   cache.set(index,canvas);return canvas
 }
-function activity(c:CanvasRenderingContext2D,era:number,t:number,city:number){
+export function activity(c:CanvasRenderingContext2D,era:number,t:number,city:number){
   if(era===0){
     for(let i=0;i<5;i++){
       const x=97+i*196,y=i%2?227:465,flicker=Math.sin(t*11+i*3)*4
@@ -164,86 +163,4 @@ function activity(c:CanvasRenderingContext2D,era:number,t:number,city:number){
     const hoverX=(t*59+city*77)%1070-50
     prop(c,3,2,hoverX,429+Math.sin(t*4)*6,78)
   }
-}
-function human(c:CanvasRenderingContext2D,h:Human,t:number){
-  const atlas=humanAtlas();if(!ready(atlas))return
-  const x=Math.round(h.x),y=Math.round(h.y),named=h.named
-  c.fillStyle='#11152277';c.beginPath();c.ellipse(x,y+1,13,5,0,0,Math.PI*2);c.fill()
-  if(named){c.fillStyle='#ffd979';c.beginPath();c.arc(x,y-25,30+Math.sin(t*4)*2,0,Math.PI*2);c.globalAlpha=.18;c.fill();c.globalAlpha=1}
-  const row=named?4:h.kind==='runner'?1:h.kind==='hunter'?2:h.kind==='rare'?3:0
-  const frame=h.flash>0?4:h.panic>0?[1,3,2,3][Math.floor(t*10)%4]:Math.floor(t*5+h.id)%3
-  c.save();c.translate(x,y);if(h.vx<0)c.scale(-1,1)
-  c.drawImage(atlas,frame*96,row*96,96,96,-26,-60,52,62);c.restore()
-  if(named||h.hp<h.maxHp){rect(c,x-19,y-68,38,5,'#1c1729');rect(c,x-18,y-67,36*h.hp/h.maxHp,3,named?'#ffd77b':'#f36783')}
-  if(named){rect(c,x-3,y-77,6,6,'#ffe7a1');rect(c,x-1,y-81,2,4,'#ffe7a1')}
-  if(h.windup>0){c.strokeStyle='#ff607a';c.lineWidth=3;c.beginPath();c.arc(x,y-27,32,-Math.PI/2,-Math.PI/2+Math.PI*2*(1-h.windup/.8));c.stroke();c.font='bold 15px sans-serif';c.fillStyle='#ffb685';c.textAlign='center';c.fillText('!',x,y-78)}
-}
-function vampire(c:CanvasRenderingContext2D,night:Night,t:number){
-  const x=Math.round(night.vampireX),y=Math.round(night.vampireY),flap=Math.sin(t*13)*5
-  c.fillStyle='#090b19aa';c.beginPath();c.ellipse(x,y+2,18,6,0,0,Math.PI*2);c.fill()
-  if(ready(sprites.vampires)){
-    const moving=Math.hypot(night.vampireTargetX-night.vampireX,night.vampireTargetY-night.vampireY)>18
-    const frame=night.vampireHurt>0?5:night.vampireAttack>.15?4:night.vampireAttack>0?3:moving?[1,3,2,3][Math.floor(t*9)%4]:Math.floor(t*4)%3
-    c.drawImage(sprites.vampires,frame*112,night.district.era*112,112,112,x-42,y-86,84,89)
-    return
-  }
-  poly(c,[[x-8,y-27],[x-23,y-35-flap],[x-31,y-23],[x-18,y-18],[x-11,y-13]],'#4d203e')
-  poly(c,[[x+8,y-27],[x+23,y-35-flap],[x+31,y-23],[x+18,y-18],[x+11,y-13]],'#4d203e')
-  poly(c,[[x-11,y-31],[x,y-37],[x+11,y-31],[x+14,y-2],[x,y-7],[x-14,y-2]],'#281629')
-  rect(c,x-9,y-31,18,14,'#caafaa');rect(c,x-11,y-37,22,9,'#151326')
-  rect(c,x-7,y-26,4,3,'#ff6683');rect(c,x+3,y-26,4,3,'#ff6683')
-  rect(c,x-4,y-17,2,4,'#fff1dd');rect(c,x+3,y-17,2,4,'#fff1dd')
-  rect(c,x-10,y-7,6,10,'#221526');rect(c,x+4,y-7,6,10,'#221526')
-  c.strokeStyle='#f36b83';c.lineWidth=1;c.globalAlpha=.4;c.beginPath();c.arc(x,y-21,23+Math.sin(t*4)*2,0,Math.PI*2);c.stroke();c.globalAlpha=1
-}
-export function drawCity(c:CanvasRenderingContext2D,night:Night,t:number,preview=false){
-  const {scale,x:offset,y:offsetY}=camera(c.canvas.width,c.canvas.height)
-  c.setTransform(1,0,0,1,0,0)
-  c.clearRect(0,0,c.canvas.width,c.canvas.height)
-  c.setTransform(scale,0,0,scale,offset,offsetY)
-  c.imageSmoothingEnabled=false
-  const progress=Math.min(1,preview ? .12+.025*Math.sin(t*.25) : night.elapsed/night.duration)
-  if(ready(sprites.sky)){
-    const position=progress*7,frame=Math.min(7,Math.floor(position)),next=Math.min(7,frame+1)
-    c.drawImage(sprites.sky,frame*512,0,512,160,0,0,W,210)
-    if(next!==frame){c.globalAlpha=position-frame;c.drawImage(sprites.sky,next*512,0,512,160,0,0,W,210);c.globalAlpha=1}
-  }else{rect(c,0,0,W,210,'#261d39')}
-  c.drawImage(scenery(night.save.district),0,0)
-  if(progress>.55){c.fillStyle='rgba(255,157,115,'+((progress-.55)*.5)+')';c.fillRect(0,165,W,H-165)}
-  const era=night.district.era
-  // animated light pools and spatial effects
-  for(let i=0;i<10;i++){const x=88+i*91,y=i%2?220:465;c.globalAlpha=.13+Math.sin(t*5+i)*.04;c.fillStyle=era>=2?'#76daef':'#ffb56d';c.beginPath();c.ellipse(x,y+7,20,9,0,0,Math.PI*2);c.fill()}
-  c.globalAlpha=1
-  activity(c,era,t,night.district.city)
-  const focus=night.humans.find(h=>h.id===night.focusId)
-  if(focus&&night.focusUntil>0){c.strokeStyle=focus.windup>0?'#ff5577':'#ffe5af';c.lineWidth=2;c.beginPath();c.ellipse(focus.x,focus.y,23,9,0,0,Math.PI*2);c.stroke()}
-  const people=[...night.humans].sort((a,b)=>a.y-b.y)
-  let vampireDrawn=false
-  for(const h of people){if(!vampireDrawn&&h.y>night.vampireY){vampire(c,night,t);vampireDrawn=true}human(c,h,t)}
-  if(!vampireDrawn)vampire(c,night,t)
-  for(const a of night.animations){
-    if(a.row<5)effect(c,a.row,Math.floor(a.age/a.duration*8),a.x,a.y,a.size)
-    else{
-      const atlas=humanAtlas()
-      if(ready(atlas)){
-        c.globalAlpha=1-a.age/a.duration
-        c.drawImage(atlas,5*96,(a.row-5)*96,96,96,a.x-a.size/2,a.y-a.size,a.size,a.size)
-        c.globalAlpha=1
-      }
-    }
-  }
-  const servants=Math.min(night.servants,24)
-  for(let i=0;i<servants;i++){
-    const x=150+(i*79)%720+Math.sin(t*1.8+i)*28,y=170+(i*53)%290+Math.cos(t*2+i)*16
-    if(ready(sprites.effects))effect(c,4,Math.floor(t*12+i),x,y,36)
-    else{rect(c,x-7,y-2,5,4,'#4fe4d8');rect(c,x-2,y-5,4,6,'#9dfbf0');rect(c,x+2,y-2,5,4,'#4fe4d8')}
-  }
-  for(const p of night.particles){
-    c.globalAlpha=Math.min(1,p.life*2)
-    if(p.text){c.font='bold 13px system-ui';c.textAlign='center';c.lineWidth=3;c.strokeStyle='#1c1728';c.strokeText(p.text,p.x,p.y);c.fillStyle=p.color;c.fillText(p.text,p.x,p.y)}
-    else rect(c,p.x,p.y,p.size,p.size,p.color)
-  }
-  c.globalAlpha=1
-  if(night.shakes>0){c.fillStyle='rgba(255,82,111,.08)';c.fillRect(0,0,W,H)}
-  c.setTransform(1,0,0,1,0,0)
 }
