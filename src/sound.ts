@@ -40,5 +40,6 @@ export function sfx(name: string, combo = 0) {
     case 'pact': tone(300, 900, 0.3, 'sine', 0.05); break
     case 'dice': tone(1200, 900, 0.03, 'square', 0.02); break
     case 'click': tone(700, 520, 0.05, 'sine', 0.03); break
+    case 'combo': [0, 0.05, 0.1].forEach((d, i) => tone(440 * Math.pow(1.5, i), 660 * Math.pow(1.5, i), 0.15, 'square', 0.035, d)); break
   }
 }

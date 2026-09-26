@@ -4,7 +4,7 @@ import { ERAS } from '../game/data'
 import type { Save } from '../game/save'
 import { totalLevels } from '../game/save'
 import { camera, W, H } from '../viewport'
-import { effect, poly, ready, rect, sprites } from './scenery'
+import { bat as drawBat, fire, glow, poly, ready, rect, sprites } from './scenery'
 
 export interface LairState { levels: number; cleared: number; echoes: number; shinies: number; era: number }
 export const lairState = (s: Save): LairState => ({
@@ -47,7 +47,10 @@ export function drawLair(c: CanvasRenderingContext2D, s: LairState, t: number) {
   // great window with the night outside
   c.save()
   c.beginPath(); c.moveTo(360, 300); c.lineTo(360, 120); c.quadraticCurveTo(500, -30, 640, 120); c.lineTo(640, 300); c.closePath(); c.clip()
-  if (ready(sprites.sky)) c.drawImage(sprites.sky, 0, 0, 512, 160, 330, 0, 340, 300); else rect(c, 330, 0, 340, 300, '#261d39')
+  const sky = c.createLinearGradient(0, 0, 0, 300); sky.addColorStop(0, '#0c0820'); sky.addColorStop(1, '#3a1c46')
+  c.fillStyle = sky; c.fillRect(330, 0, 340, 300)
+  for (let i = 0; i < 40; i++) { c.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(t + i)); rect(c, 340 + (i * 83) % 320, (i * 47) % 200, 1, 1, '#fff') }
+  c.globalAlpha = 1
   c.fillStyle = '#fff7df'; c.beginPath(); c.arc(560 + Math.sin(t * 0.05) * 4, 95, 34, 0, Math.PI * 2); c.fill()
   c.fillStyle = '#ffe9c066'; c.beginPath(); c.arc(560, 95, 52, 0, Math.PI * 2); c.fill()
   for (let i = 0; i < 9; i++) { const x = 360 + i * 36; poly(c, [[x, 300], [x + 14, 230 - (i * 37) % 60], [x + 32, 300]], '#140c1c') }
@@ -110,14 +113,17 @@ export function drawLair(c: CanvasRenderingContext2D, s: LairState, t: number) {
     const side = i % 2 ? 1 : -1, k = Math.floor(i / 2)
     const x = 500 + side * (95 + k * 52), y = 300 + (k % 2) * 34
     rect(c, x - 3, y - 18, 6, 18, '#efe4cf')
-    effect(c, 0, Math.floor(t * 10 + i), x, y - 26, 26)
-    c.fillStyle = '#ffb56d18'; c.beginPath(); c.arc(x, y - 22, 26, 0, Math.PI * 2); c.fill()
+    const f = Math.sin(t * 12 + i * 2) * 1.5
+    c.globalCompositeOperation = 'lighter'; glow(c, x, y - 24, 30, 'rgba(255,170,90,0.45)')
+    c.fillStyle = '#ffb030'; c.beginPath(); c.ellipse(x, y - 24 + f * 0.3, 3, 7 + f, 0, 0, Math.PI * 2); c.fill()
+    c.fillStyle = '#fff4c0'; c.beginPath(); c.ellipse(x, y - 22, 1.5, 3.5, 0, 0, Math.PI * 2); c.fill()
+    c.globalCompositeOperation = 'source-over'
   }
   // bats
   const bats = Math.min(20, Math.floor(s.levels / 12) + s.echoes * 3)
   for (let i = 0; i < bats; i++) {
     const a = t * (0.5 + (i % 4) * 0.12) + i * 1.7
-    effect(c, 4, Math.floor(t * 12 + i), 500 + Math.cos(a) * (220 + (i % 5) * 40), 150 + Math.sin(a * 1.3) * 70, 30)
+    drawBat(c, 500 + Math.cos(a) * (220 + (i % 5) * 40), 150 + Math.sin(a * 1.3) * 70, 1.2, t + i * 0.31, '#140814')
   }
   // vignette
   const v = c.createRadialGradient(500, 300, 200, 500, 300, 640)
@@ -125,3 +131,5 @@ export function drawLair(c: CanvasRenderingContext2D, s: LairState, t: number) {
   c.fillStyle = v; c.fillRect(0, 0, W, H)
   c.setTransform(1, 0, 0, 1, 0, 0)
 }
+
+void fire

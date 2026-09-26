@@ -322,6 +322,8 @@ function frame(now: number) {
       if (s === 'boss') banner(`☠ ${hunt.city.boss.toUpperCase()} APARECEU`, 'boss')
       if (s === 'bosskill') banner('CHEFE DERROTADO!', 'gold')
       if (s === 'shiny') banner('✦ HUMANO SHINY ✦', 'gold')
+      if (s === 'combo') banner(['', 'FRENESI', 'MASSACRE', 'CARNIFICINA', 'BANQUETE', 'APOCALIPSE', 'ECLIPSE'][[10, 25, 50, 100, 200, 400].indexOf(hunt.comboMark) + 1] + ` ×${hunt.comboMark}`, 'combo')
+      if (s === 'pickup' || s === 'pure') { const el = document.querySelector('.hunt-loot'); el?.classList.remove('bump'); void (el as HTMLElement | null)?.offsetWidth; el?.classList.add('bump') }
     }
     hunt.sounds.length = 0
     if (now - lastHud > 90) { updateHud(); lastHud = now }

@@ -136,6 +136,8 @@ button:disabled { cursor: default }
 .banner { position: absolute; top: 28%; left: 50%; transform: translate(-50%, -50%) scale(.6); opacity: 0; white-space: nowrap; font: 900 clamp(26px, 5vw, 48px) var(--display); color: #fff; text-shadow: 0 4px 0 #4c0613, 0 0 24px var(--blood) }
 .banner.gold { color: var(--gold-hi); text-shadow: 0 4px 0 #3a1400, 0 0 26px var(--gold) }
 .banner.boss { color: #ffd0d8 }
+.banner.combo { top: 38%; font-size: clamp(22px, 4vw, 38px); color: #ffe38a; text-shadow: 0 3px 0 #4c0613, 0 0 22px #ff5a3a }
+.hunt-loot.bump .loot-line { animation: bump .22s }
 .banner.show { animation: banner 1.8s ease-out forwards }
 @keyframes banner { 0% { opacity: 0; transform: translate(-50%, -50%) scale(.5) } 12% { opacity: 1; transform: translate(-50%, -50%) scale(1.12) } 22% { transform: translate(-50%, -50%) scale(1) } 80% { opacity: 1 } 100% { opacity: 0; transform: translate(-50%, -70%) scale(1) } }
 .hint { position: absolute; bottom: calc(22px + var(--safe-b)); left: 50%; transform: translateX(-50%); padding: 10px 18px; border-radius: 14px; background: #120913dd; border: 2px solid #b8893f88; text-align: center; font: 800 14px var(--body); color: #fff; animation: hintpulse 2s ease-in-out infinite; white-space: nowrap }

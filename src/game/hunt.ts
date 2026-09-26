@@ -15,6 +15,10 @@ export interface FloatText { x: number; y: number; vy: number; life: number; tex
 export interface Spark { x: number; y: number; vx: number; vy: number; life: number; color: string; size: number }
 export interface Fx { x: number; y: number; row: number; age: number; duration: number; size: number }
 export interface Loot { blood: number; teeth: number; shard: number; pure: number }
+export interface Splat { x: number; y: number; r: number; life: number; rot: number }
+export interface Soul { x: number; y: number; vx: number; vy: number; life: number; color: string; size: number }
+export interface Ring { x: number; y: number; r: number; max: number; life: number; color: string; width: number }
+const COMBO_MARKS = [10, 25, 50, 100, 200, 400]
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a)
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
@@ -29,6 +33,14 @@ export class Hunt {
   texts: FloatText[] = []
   sparks: Spark[] = []
   fx: Fx[] = []
+  splats: Splat[] = []
+  souls: Soul[] = []
+  rings: Ring[] = []
+  /** Brief slow-motion on big moments (boss kill, shiny). */
+  hitStop = 0
+  /** Camera punch-in, decays to 0. */
+  punch = 0
+  comboMark = 0
   loot: Loot = { blood: 0, teeth: 0, shard: 0, pure: 0 }
   elapsed = 0
   duration: number
@@ -128,6 +140,20 @@ export class Hunt {
   update(dt: number) {
     if (this.ended) return
     dt = Math.min(0.05, dt)
+    // visual-only timers run in real time; the simulation slows during hit-stop
+    this.punch = Math.max(0, this.punch - dt * 2.5)
+    for (const s of this.splats) s.life -= dt * 0.04
+    this.splats = this.splats.filter((s) => s.life > 0)
+    for (const r of this.rings) { r.life -= dt; r.r += (r.max - r.r) * Math.min(1, dt * 9) }
+    this.rings = this.rings.filter((r) => r.life > 0).slice(-40)
+    for (const s of this.souls) {
+      const dx = this.vampireX - s.x, dy = this.vampireY - 50 - s.y, d = Math.hypot(dx, dy) || 1
+      s.vx += (dx / d) * 1400 * dt; s.vy += (dy / d) * 1400 * dt; s.vx *= 0.9; s.vy *= 0.9
+      s.x += s.vx * dt; s.y += s.vy * dt; s.life -= dt
+      if (d < 18) s.life = 0
+    }
+    this.souls = this.souls.filter((s) => s.life > 0).slice(-80)
+    if (this.hitStop > 0) { this.hitStop -= dt; dt *= 0.15 }
     this.elapsed += dt
     this.biteCooldown = Math.max(0, this.biteCooldown - dt)
     this.bite = Math.max(0, this.bite - dt)
@@ -153,7 +179,9 @@ export class Hunt {
       while (this.tickClock >= gap) {
         this.tickClock -= gap
         const r = this.radius
-        for (const h of [...this.humans]) if (Math.hypot(h.x - this.auraX, (h.y - 26) - this.auraY) < r + 12) this.hit(h, this.damage, false)
+        let hits = 0
+        for (const h of [...this.humans]) if (Math.hypot(h.x - this.auraX, (h.y - 26) - this.auraY) < r + 12) { this.hit(h, this.damage, false); hits++ }
+        if (hits) this.rings.push({ x: this.auraX, y: this.auraY, r: r * 0.5, max: r, life: 0.25, color: '#ff5a74', width: 2 })
       }
     }
 
@@ -176,6 +204,7 @@ export class Hunt {
     const b = this.bounds
     for (const h of this.humans) {
       h.life += dt; h.flash = Math.max(0, h.flash - dt); h.panic = Math.max(0, h.panic - dt)
+      if (h.shiny && Math.random() < dt * 14) this.sparks.push({ x: h.x + rand(-12, 12), y: h.y - rand(10, 50), vx: rand(-10, 10), vy: rand(-40, -10), life: 0.6, color: '#ffe38a', size: 2 })
       const dx = h.x - this.auraX, dy = h.y - 26 - this.auraY, d = Math.hypot(dx, dy)
       if (this.auraOn && d < this.radius * 2.2 && h.kind !== 'boss') { h.vx += (dx / (d || 1)) * 60 * dt; h.vy += (dy / (d || 1)) * 40 * dt }
       const speed = (h.kind === 'runner' ? 1.9 : h.kind === 'guard' ? 0.7 : h.kind === 'boss' ? 0.55 : 1) * (h.shiny ? 2.2 : 1) * (h.panic > 0 ? 1.8 : 1)
@@ -216,7 +245,7 @@ export class Hunt {
     let dmg = base * (crit ? this.critMult : 1)
     if (h.kind === 'boss') dmg *= (1 + this.stats.bossDmg / 100) * (this.pact === 'hunter' ? 2.5 : 1)
     h.hp -= dmg; h.flash = 0.12; h.panic = 1
-    if (crit) this.crits++
+    if (crit) { this.crits++; if (h.kind === 'boss') this.hitStop = Math.max(this.hitStop, 0.03) }
     if (crit || bite || h.kind === 'boss') this.float(h.x + rand(-10, 10), h.y - 58, fmtShort(dmg) + (crit ? '!' : ''), crit ? '#ffd35c' : color ?? '#ffffff', crit ? 20 : 14)
     if (h.hp <= 0) this.capture(h)
   }
@@ -235,6 +264,12 @@ export class Hunt {
     this.loot.blood += blood
     this.float(h.x, h.y - 44, '+' + fmtShort(blood), '#ff5470', 13)
     this.burst(h.x, h.y - 24, h.shiny ? '#ffd35c' : '#e0183a', h.shiny ? 22 : 8)
+    this.splats.push({ x: h.x + rand(-6, 6), y: h.y + rand(-3, 3), r: rand(7, 13) * (h.kind === 'guard' ? 1.4 : 1), life: 1, rot: rand(0, Math.PI) })
+    if (this.splats.length > 140) this.splats.shift()
+    for (let k = 0; k < (h.shiny ? 5 : 1); k++) this.souls.push({ x: h.x, y: h.y - 30, vx: rand(-160, 160), vy: rand(-220, -80), life: 1.4, color: h.shiny ? '#ffe38a' : '#ff3a5a', size: h.shiny ? 5 : 3.5 })
+    this.rings.push({ x: h.x, y: h.y - 24, r: 4, max: 34, life: 0.3, color: h.shiny ? '#ffe38a' : '#ff7088', width: 3 })
+    const mark = COMBO_MARKS.find((m) => this.combo === m)
+    if (mark) { this.comboMark = mark; this.sounds.push('combo'); this.rings.push({ x: this.auraX, y: this.auraY, r: 10, max: 220, life: 0.5, color: '#ffe38a', width: 5 }) }
     this.sounds.push('capture')
     // loot rolls
     const s = this.stats
@@ -247,7 +282,10 @@ export class Hunt {
       for (let k = 0; k < 4; k++) this.drop(h, 'vial', blood * 5 * bonus)
       this.drop(h, 'teeth', Math.ceil(3 * bonus))
       if (Math.random() < 0.25) this.drop(h, 'pure', 1)
-      this.shake = 6
+      this.shake = 8
+      this.hitStop = 0.12
+      this.punch = 0.6
+      this.rings.push({ x: h.x, y: h.y - 30, r: 10, max: 120, life: 0.6, color: '#ffe38a', width: 6 })
       this.sounds.push('jackpot')
     }
     // explosions
@@ -258,12 +296,14 @@ export class Hunt {
       this.spawn('boss')
       this.flashRed = 1
       this.shake = 10
+      this.punch = 1
       this.sounds.push('boss')
     }
   }
 
   private explode(x: number, y: number, depth: number) {
     this.fx.push({ x, y: y - 20, row: 3, age: 0, duration: 0.55, size: 150 })
+    this.rings.push({ x, y: y - 20, r: 8, max: 80, life: 0.45, color: '#ffae5c', width: 6 })
     this.shake = Math.max(this.shake, 4)
     this.sounds.push('boom')
     const dmg = this.damage * (2 + this.stats.explodeDmg)
@@ -279,7 +319,11 @@ export class Hunt {
   private killBoss(h: Human) {
     this.bossKilled = true
     this.boss = null
-    this.shake = 14
+    this.shake = 16
+    this.hitStop = 0.35
+    this.punch = 1.4
+    for (let k = 0; k < 4; k++) this.rings.push({ x: h.x, y: h.y - 40, r: 10 + k * 20, max: 260 + k * 60, life: 0.7 + k * 0.1, color: k % 2 ? '#ffe38a' : '#ff3a5a', width: 8 - k })
+    for (let k = 0; k < 12; k++) this.souls.push({ x: h.x, y: h.y - 40, vx: rand(-300, 300), vy: rand(-320, -60), life: 1.8, color: '#ffe38a', size: 6 })
     this.flashRed = 0.6
     this.sounds.push('bosskill')
     const blood = this.bloodPer * 60
@@ -303,6 +347,7 @@ export class Hunt {
     const color = d.type === 'vial' ? '#ff5470' : d.type === 'teeth' ? '#ffd35c' : d.type === 'shard' ? '#c68bff' : '#ffffff'
     this.float(this.auraX, this.auraY - 30, '+' + fmtShort(d.amount) + (d.type === 'vial' ? '' : d.type === 'teeth' ? ' ▲' : d.type === 'shard' ? ' ◆' : ' ✦'), color, d.type === 'pure' ? 22 : 15)
     this.sounds.push(d.type === 'pure' ? 'pure' : 'pickup')
+    this.rings.push({ x: this.auraX, y: this.auraY + 10, r: 4, max: d.type === 'pure' ? 70 : 30, life: 0.3, color: d.type === 'vial' ? '#ff5470' : d.type === 'teeth' ? '#ffd35c' : d.type === 'shard' ? '#c68bff' : '#ffffff', width: 3 })
   }
 
   private float(x: number, y: number, text: string, color: string, size: number) {

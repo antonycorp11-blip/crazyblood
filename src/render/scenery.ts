@@ -1,166 +1,251 @@
-// Shared world art: sprite atlases, city scenery (from the era/city index) and ambient activity.
-import { ERAS } from '../game/data'
+// City art: procedural night sky, layered skylines, textured iso ground with streets, building rows from
+// the props atlas, baked lighting — plus ambient animation. One cached canvas per city.
 import { W, H } from '../viewport'
-export const cache=new Map<number,HTMLCanvasElement>()
-const spriteFiles={humans:'humans.png',vampires:'vampires.png',props:'city-props.png',terrain:'terrain.png',effects:'effects.png',sky:'day-night.png'} as const
-export const sprites={} as Record<keyof typeof spriteFiles,HTMLImageElement>
-for(const key of Object.keys(spriteFiles) as Array<keyof typeof spriteFiles>){
-  const img=new Image()
-  img.onload=()=>cache.clear()
-  img.src='/assets/sprites/'+spriteFiles[key]
-  sprites[key]=img
+
+const files = { humans: 'humans.png', vampires: 'vampires.png', props: 'city-props.png', terrain: 'terrain.png', icons: 'skill-icons.png' } as const
+export const sprites = {} as Record<keyof typeof files, HTMLImageElement>
+export const cache = new Map<number, HTMLCanvasElement>()
+for (const key of Object.keys(files) as Array<keyof typeof files>) {
+  const img = new Image()
+  img.onload = () => cache.clear()
+  img.src = '/assets/sprites/' + files[key]
+  sprites[key] = img
 }
-export const ready=(img:HTMLImageElement)=>img.complete&&img.naturalWidth>0
-export const humanAtlas=()=>sprites.humans
-export const effect=(c:CanvasRenderingContext2D,row:number,frame:number,x:number,y:number,size:number)=>{
-  if(!ready(sprites.effects))return
-  c.drawImage(sprites.effects,Math.floor(frame)%8*64,row*64,64,64,x-size/2,y-size/2,size,size)
+export const ready = (img: HTMLImageElement) => img.complete && img.naturalWidth > 0
+export const humanAtlas = () => sprites.humans
+export const rect = (c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: string) => { c.fillStyle = color; c.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)) }
+export const poly = (c: CanvasRenderingContext2D, pts: number[][], color: string) => { c.fillStyle = color; c.beginPath(); c.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]); c.closePath(); c.fill() }
+export function glow(c: CanvasRenderingContext2D, x: number, y: number, r: number, color: string, alpha = 1) {
+  const g = c.createRadialGradient(x, y, 0, x, y, Math.max(1, r))
+  g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0)')
+  c.globalAlpha = alpha; c.fillStyle = g; c.beginPath(); c.arc(x, y, Math.max(1, r), 0, Math.PI * 2); c.fill(); c.globalAlpha = 1
 }
-export const prop=(c:CanvasRenderingContext2D,era:number,variant:number,x:number,y:number,size:number)=>{
-  if(!ready(sprites.props))return false
-  const height=size*.9
-  c.drawImage(sprites.props,variant*160,era*144,160,144,x-size/2,y-height,size,height)
-  return true
+function rng(seed: number) { return () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296 } }
+
+export const HORIZON = 190
+
+const PAL = [
+  { sky: ['#140b24', '#3a1c3e', '#8a3a3a'], far: '#2a1a34', near: '#1a1026', ground: ['#5a4536', '#4f3c30', '#634b3a'], road: '#7a6450', light: '#ffae5c', accent: '#e4a66a' },
+  { sky: ['#0f0c26', '#2b1d4a', '#5a2d5a'], far: '#231b3c', near: '#160f28', ground: ['#4d4452', '#463e4c', '#554b5a'], road: '#6e6472', light: '#ffc878', accent: '#c289db' },
+  { sky: ['#070b1c', '#141e3e', '#3a2a5a'], far: '#1a2240', near: '#0e1428', ground: ['#3a4452', '#343d4a', '#404b5a'], road: '#262c36', light: '#7fd6ff', accent: '#71ccef' },
+  { sky: ['#040c1c', '#0a2a3e', '#1a5a6a'], far: '#0e2a3c', near: '#081a28', ground: ['#2e4a5e', '#294356', '#335268'], road: '#1a2c3a', light: '#6ff7ff', accent: '#8ce7e4' },
+]
+
+/** Procedural night sky that warms toward dawn as the night progresses (0..1). */
+export function drawSky(c: CanvasRenderingContext2D, era: number, progress: number, t: number) {
+  const p = PAL[era]
+  const g = c.createLinearGradient(0, 0, 0, HORIZON + 20)
+  g.addColorStop(0, p.sky[0]); g.addColorStop(0.6, p.sky[1]); g.addColorStop(1, p.sky[2])
+  c.fillStyle = g; c.fillRect(0, 0, W, HORIZON + 20)
+  if (progress > 0.55) {
+    const k = (progress - 0.55) / 0.45
+    const d = c.createLinearGradient(0, 0, 0, HORIZON + 20)
+    d.addColorStop(0, `rgba(90,110,170,${k * 0.5})`); d.addColorStop(1, `rgba(255,170,110,${k * 0.85})`)
+    c.fillStyle = d; c.fillRect(0, 0, W, HORIZON + 20)
+  }
+  const r = rng(era * 97 + 3)
+  for (let i = 0; i < 90; i++) {
+    const x = r() * W, y = r() * HORIZON * 0.9, speed = 0.6 + r() * 2, big = r() < 0.15
+    c.globalAlpha = (0.4 + 0.6 * Math.abs(Math.sin(t * speed + i))) * (1 - progress * 0.9)
+    rect(c, x, y, big ? 2 : 1, big ? 2 : 1, '#fff')
+  }
+  c.globalAlpha = 1
+  const mx = 780 - progress * 120, my = 58 + progress * 110
+  glow(c, mx, my, 120, era >= 2 ? 'rgba(170,210,255,0.35)' : 'rgba(255,230,190,0.35)')
+  c.fillStyle = '#fff4dc'; c.beginPath(); c.arc(mx, my, 26, 0, Math.PI * 2); c.fill()
+  c.fillStyle = 'rgba(200,185,160,0.35)'
+  for (const [dx, dy, rr] of [[-8, -6, 5], [7, 4, 7], [-2, 10, 3], [10, -9, 3]]) { c.beginPath(); c.arc(mx + dx, my + dy, rr, 0, Math.PI * 2); c.fill() }
+  c.fillStyle = 'rgba(20,10,30,0.35)'
+  for (let i = 0; i < 4; i++) {
+    const x = ((t * (6 + i * 2) + i * 290) % (W + 300)) - 150, y = 40 + i * 32
+    c.beginPath(); c.ellipse(x, y, 110, 12, 0, 0, Math.PI * 2); c.ellipse(x + 60, y - 6, 70, 10, 0, 0, Math.PI * 2); c.fill()
+  }
 }
-export const poly=(c:CanvasRenderingContext2D,points:number[][],color:string)=>{c.fillStyle=color;c.beginPath();c.moveTo(points[0][0],points[0][1]);for(let i=1;i<points.length;i++)c.lineTo(points[i][0],points[i][1]);c.closePath();c.fill()}
-export const rect=(c:CanvasRenderingContext2D,x:number,y:number,w:number,h:number,color:string)=>{c.fillStyle=color;c.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h))}
-const diamond=(c:CanvasRenderingContext2D,x:number,y:number,color:string)=>poly(c,[[x,y-18],[x+36,y],[x,y+18],[x-36,y]],color)
-function building(c:CanvasRenderingContext2D,x:number,y:number,w:number,h:number,era:number,variant:number){
-  const p=[['#755c50','#493c4a','#b28b65'],['#6b5167','#352b49','#aa6e71'],['#436077','#263b56','#5a9db0'],['#294565','#18233f','#56bed1']][era]
-  const left=p[0],side=p[1],trim=p[2]
-  if(era===0){
-    poly(c,[[x-w*.55,y],[x-w*.45,y-h*.65],[x,y-h],[x+w*.45,y-h*.65],[x+w*.55,y]],side)
-    poly(c,[[x-w*.55,y],[x,y-h*.65],[x+w*.55,y]],left)
-    rect(c,x-8,y-22,16,22,'#201e2d')
-    rect(c,x-5,y-16,10,16,'#e38d52')
-    for(let i=0;i<4;i++)rect(c,x-w*.35+i*w*.2,y-h*.48+(i%2)*5,4,4,trim)
-  }else if(era===1){
-    poly(c,[[x-w/2,y-h],[x+w/2,y-h],[x+w/2,y],[x-w/2,y]],left)
-    poly(c,[[x+w/2,y-h],[x+w/2+15,y-h-8],[x+w/2+15,y-9],[x+w/2,y]],side)
-    poly(c,[[x-w/2-8,y-h],[x,y-h-w*.38],[x+w/2+8,y-h]],'#33283e')
-    poly(c,[[x-w/2,y-h-2],[x,y-h-w*.34],[x+w/2,y-h-2]],'#8c405b')
-    rect(c,x-9,y-25,18,25,'#2e2638')
-    rect(c,x-6,y-20,12,20,'#c78461')
-    for(const dx of [-w*.3,w*.2])rect(c,x+dx,y-h+18,9,13,'#f6bd71')
-    rect(c,x-w*.48,y-5,w*.96,5,trim)
-  }else if(era===2){
-    poly(c,[[x-w/2,y-h],[x+w/2,y-h],[x+w/2,y],[x-w/2,y]],left)
-    poly(c,[[x+w/2,y-h],[x+w/2+13,y-h-9],[x+w/2+13,y-10],[x+w/2,y]],side)
-    rect(c,x-w/2-4,y-h-7,w+8,9,'#243249')
-    for(let xx=x-w/2+8;xx<x+w/2-6;xx+=17)for(let yy=y-h+15;yy<y-12;yy+=21)rect(c,xx,yy,9,12,(xx+yy+variant)%3?'#91c6d1':'#f0a66e')
-    rect(c,x-w*.28,y-9,w*.56,7,'#f3547c')
-  }else{
-    poly(c,[[x-w/2,y-h],[x+w/2,y-h],[x+w/2,y],[x-w/2,y]],left)
-    poly(c,[[x+w/2,y-h],[x+w/2+19,y-h-15],[x+w/2+19,y-12],[x+w/2,y]],side)
-    poly(c,[[x-w/2,y-h],[x,y-h-28],[x+w/2,y-h]],'#527f99')
-    for(let xx=x-w/2+10;xx<x+w/2-4;xx+=20)for(let yy=y-h+14;yy<y-8;yy+=24)rect(c,xx,yy,11,14,(xx+yy+variant)%3?'#69e7e3':'#e287df')
-    rect(c,x-w*.4,y-7,w*.8,4,'#60d9e9')
+
+function skyline(c: CanvasRenderingContext2D, era: number, seed: number, base: number, color: string, scale: number, lit: boolean) {
+  const r = rng(seed)
+  c.fillStyle = color
+  if (era === 0) {
+    c.beginPath(); c.moveTo(0, base)
+    for (let x = 0; x <= W; x += 40) c.lineTo(x, base - (30 + r() * 70) * scale)
+    c.lineTo(W, base); c.fill()
+  } else if (era === 1) {
+    for (let x = -20; x < W; x += 28 + r() * 30) {
+      const w = 26 + r() * 30, h = (30 + r() * 60) * scale
+      c.fillRect(x, base - h, w, h)
+      if (r() < 0.5) { c.beginPath(); c.moveTo(x - 4, base - h); c.lineTo(x + w / 2, base - h - 26 * scale); c.lineTo(x + w + 4, base - h); c.fill() }
+      else for (let k = 0; k < w; k += 8) c.fillRect(x + k, base - h - 6, 5, 6)
+      if (lit && r() < 0.6) { c.fillStyle = 'rgba(255,190,110,0.55)'; c.fillRect(x + w / 2 - 2, base - h * 0.6, 4, 6); c.fillStyle = color }
+    }
+  } else if (era === 2) {
+    for (let x = -10; x < W; x += 34 + r() * 26) {
+      const w = 30 + r() * 26, h = (50 + r() * 110) * scale
+      c.fillRect(x, base - h, w, h)
+      if (lit) for (let yy = base - h + 6; yy < base - 6; yy += 9) for (let xx = x + 4; xx < x + w - 4; xx += 7) if (r() < 0.35) { c.fillStyle = r() < 0.8 ? 'rgba(255,220,140,0.6)' : 'rgba(255,90,170,0.7)'; c.fillRect(xx, yy, 3, 4); c.fillStyle = color }
+    }
+  } else {
+    for (let x = -20; x < W; x += 60 + r() * 40) {
+      const w = 50 + r() * 50, h = (40 + r() * 90) * scale
+      c.beginPath(); c.ellipse(x + w / 2, base, w / 2, h * 0.5, 0, Math.PI, 0); c.fill()
+      c.fillRect(x + w / 2 - 3, base - h - 30 * scale, 6, h)
+      if (lit) { c.fillStyle = 'rgba(110,247,255,0.8)'; c.fillRect(x + w / 2 - 2, base - h - 30 * scale, 4, 4); c.fillStyle = color }
+    }
   }
-  rect(c,x-w*.52,y+1,w+12,5,'#191a31')
 }
-export function scenery(index:number){
-  if(cache.has(index))return cache.get(index)!
-  const canvas=document.createElement('canvas');canvas.width=W;canvas.height=H
-  const c=canvas.getContext('2d')!;const era=Math.floor(index/5),city=index%5
-  for(let i=0;i<13;i++){
-    const x=i*88-25,h=38+(i*37+city*19)%70
-    poly(c,[[x,210],[x+45,205-h],[x+100,210]],era===0?'#332f43':era===1?'#27263c':era===2?'#1a3149':'#142e51')
-  }
-  rect(c,0,168,W,H-168,['#51433f','#4d4057','#344a5c','#2b4562'][era])
-  for(let i=-20;i<25;i++)for(let j=-15;j<22;j++){
-    const x=500+(i-j)*36,y=222+(i+j)*18
-    if(x<-40||x>1040||y<145||y>570)continue
-    const noise=(i*71+j*43+index*17)%9
-    const colors=era===0?['#67544b','#6a574c','#725c4f']:era===1?['#5c4c5b','#625160','#675467']:era===2?['#455667','#4b5d6c','#506170']:['#405774','#455e7b','#4c6784']
-    if(ready(sprites.terrain))c.drawImage(sprites.terrain,(Math.abs(noise)%7===0?2:1)*72,era*36,72,36,x-36,y-18,72,36)
-    else diamond(c,x,y,colors[Math.abs(noise)%3])
-    if(noise===0&&y>240&&y<520)rect(c,x-1,y-1,3,3,era===3?'#8ce7eb':'#998578')
-  }
-  const accent=ERAS[era].color
-  if(city===0){
-    for(const x of [125,257,740,865]){
-      rect(c,x-4,206,8,29,era===0?'#45383a':era===1?'#4b3949':era===2?'#364d61':'#336173')
-      if(era<2){prop(c,0,3,x,231,100)}
-      else{rect(c,x-13,183,26,5,accent);rect(c,x-8,191,16,4,'#b9f2e8')}
+
+const TW = 72, TH = 36
+const tilePos = (i: number, j: number) => ({ x: 500 + (i - j) * (TW / 2), y: 230 + (i + j) * (TH / 2) })
+const isoTile = (c: CanvasRenderingContext2D, x: number, y: number, color: string) => poly(c, [[x, y - TH / 2], [x + TW / 2, y], [x, y + TH / 2], [x - TW / 2, y]], color)
+
+export interface Light { x: number; y: number; r: number; color: string; fire?: boolean }
+const lightsCache = new Map<number, Light[]>()
+export const cityLights = (index: number) => lightsCache.get(index) ?? []
+
+/** Static layer for a city: skylines, ground, streets, buildings, props and baked light. */
+export function scenery(index: number) {
+  if (cache.has(index)) return cache.get(index)!
+  const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H
+  const c = canvas.getContext('2d')!
+  const era = Math.floor(index / 5), slot = index % 5, p = PAL[era]
+  const r = rng(index * 131 + 7)
+  const lights: Light[] = []
+
+  skyline(c, era, index * 3 + 1, HORIZON - 4, p.far, 1.2, false)
+  const haze = c.createLinearGradient(0, HORIZON - 120, 0, HORIZON)
+  haze.addColorStop(0, 'rgba(0,0,0,0)'); haze.addColorStop(1, p.sky[2] + '66')
+  c.fillStyle = haze; c.fillRect(0, HORIZON - 120, W, 120)
+  skyline(c, era, index * 3 + 2, HORIZON + 6, p.near, 0.8, true)
+
+  c.fillStyle = p.ground[0]; c.fillRect(0, HORIZON, W, H - HORIZON)
+  for (let i = -12; i < 22; i++) for (let j = -12; j < 22; j++) {
+    const { x, y } = tilePos(i, j)
+    if (x < -40 || x > W + 40 || y < HORIZON - 10 || y > H + 20) continue
+    const road = i === 6 || (j === 5 && slot >= 1) || (i === j && slot >= 3)
+    const n = r()
+    isoTile(c, x, y, road ? p.road : p.ground[n < 0.7 ? 0 : n < 0.85 ? 1 : 2])
+    if (!road) { c.globalAlpha = 0.03 + n * 0.04; isoTile(c, x, y - 1, n < 0.5 ? '#000' : '#fff'); c.globalAlpha = 1 }
+    else {
+      c.fillStyle = era === 2 ? 'rgba(255,220,120,0.35)' : era === 3 ? 'rgba(110,247,255,0.35)' : 'rgba(0,0,0,0.18)'
+      for (let k = 0; k < 4; k++) c.fillRect(x - 14 + r() * 28, y - 5 + r() * 10, era >= 2 ? 6 : 4, 2)
     }
-  }else if(city===1){
-    for(const x of [235,450,650,830]){
-      rect(c,x-29,206,58,25,era===0?'#5f4a42':'#3b3d53')
-      poly(c,[[x-34,206],[x,185],[x+34,206]],era===0?'#ad6c55':accent)
-      rect(c,x-18,215,36,4,era>=2?'#77e7ed':'#e6ae79')
+    c.strokeStyle = road ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.05)'; c.lineWidth = 1
+    c.beginPath(); c.moveTo(x - TW / 2, y); c.lineTo(x, y + TH / 2); c.lineTo(x + TW / 2, y); c.stroke()
+  }
+  for (let k = 0; k < 40; k++) {
+    const x = r() * W, y = HORIZON + 30 + r() * (H - HORIZON - 30)
+    const g = c.createRadialGradient(x, y, 0, x, y, 40 + r() * 60)
+    g.addColorStop(0, r() < 0.5 ? 'rgba(0,0,0,0.12)' : 'rgba(255,240,220,0.05)'); g.addColorStop(1, 'rgba(0,0,0,0)')
+    c.fillStyle = g; c.fillRect(x - 100, y - 100, 200, 200)
+  }
+  for (let k = 0; k < 160; k++) {
+    const x = r() * W, y = HORIZON + 20 + r() * (H - HORIZON - 20), kind = r()
+    if (era <= 1) {
+      if (kind < 0.5) { c.fillStyle = era === 0 ? '#6b7a3a' : '#5a6a4a'; for (let b = 0; b < 3; b++) c.fillRect(x + b * 2, y - 3 - (b % 2) * 2, 1, 4 + (b % 2) * 2) }
+      else if (kind < 0.8) { c.fillStyle = '#8a7a6a'; c.fillRect(x, y, 3, 2) }
+      else { c.fillStyle = era === 0 ? '#c86a8a' : '#e8d070'; c.fillRect(x, y, 2, 2) }
+    } else if (era === 2) {
+      if (kind < 0.3) { c.fillStyle = 'rgba(120,160,200,0.25)'; c.beginPath(); c.ellipse(x, y, 14, 4, 0, 0, Math.PI * 2); c.fill() }
+      else if (kind < 0.5) { c.fillStyle = '#20262e'; c.beginPath(); c.ellipse(x, y, 6, 3, 0, 0, Math.PI * 2); c.fill() }
+      else { c.fillStyle = '#4a5462'; c.fillRect(x, y, 2, 1) }
+    } else {
+      if (kind < 0.35) { c.strokeStyle = 'rgba(110,247,255,0.25)'; c.beginPath(); c.moveTo(x, y); c.lineTo(x + 16, y + 8); c.stroke() }
+      else { c.fillStyle = 'rgba(160,240,255,0.3)'; c.fillRect(x, y, 2, 2) }
     }
-  }else if(city===2){
-    poly(c,[[0,197],[1000,197],[1000,237],[0,237]],era===0?'#3d7081':era===1?'#356b86':era===2?'#356987':'#4c88aa')
-    for(let x=0;x<1000;x+=73){rect(c,x,211+(x%3),37,2,era>=2?'#7cd7e9':'#9ec5bd')}
-    poly(c,[[405,199],[595,199],[620,237],[380,237]],era>=2?'#617c8b':'#817269')
-    rect(c,398,194,203,7,era>=2?'#a7d8e2':'#af9480')
-  }else if(city===3){
-    rect(c,0,193,1000,38,era===0?'#6d554c':era===1?'#655266':era===2?'#465b6f':'#344c70')
-    for(let x=0;x<1000;x+=42)rect(c,x,181,28,13,era>=2?'#55768b':'#775b69')
-    rect(c,440,195,120,36,'#241e30')
-    poly(c,[[425,195],[500,170],[575,195]],era>=2?'#7695a2':'#94616d')
-    rect(c,476,203,48,28,'#b07d70')
-  }else{
-    poly(c,[[346,228],[369,172],[630,172],[654,228]],era===0?'#493c45':era===1?'#55435d':era===2?'#3c5872':'#294464')
-    rect(c,374,159,252,15,era>=2?'#4c7895':'#856778')
-    for(const x of [374,604]){rect(c,x,119,22,62,era>=2?'#436687':'#685168');poly(c,[[x-7,120],[x+11,92],[x+29,120]],accent)}
-    rect(c,479,182,42,46,'#242139');rect(c,487,194,26,34,era>=2?'#78d9de':'#df977b')
   }
-  const houseCount=6+city*2
-  for(let i=0;i<houseCount;i++){
-    const top=i<houseCount/2
-    const row=top?i:houseCount-1-i
-    const x=35+row*(900/(Math.ceil(houseCount/2)-1))
-    const y=top?180+(row%2)*14:535-(row%2)*10
-    if(!prop(c,era,i%4===1?1:0,x,y,era===0?125:era>=2?135:140))
-      building(c,x,y,era===0?75:era>=2?78:83,era===0?60:era>=2?85:72,era,i)
+
+  const prop = (variant: number, x: number, y: number, size: number) => {
+    if (!ready(sprites.props)) return
+    const h = size * 0.9
+    c.drawImage(sprites.props, variant * 160, era * 144, 160, 144, x - size / 2, y - h, size, h)
   }
-  // traversable streets and landmarks share the same city coordinates as the characters
-  for(let i=0;i<10;i++){
-    const x=88+i*91,y=i%2?220:465
-    rect(c,x-2,y-28,4,29,era===0?'#442e32':'#27253b')
-    rect(c,x-6,y-31,12,6,accent)
-    if(!prop(c,era,3,x,y,era===0?45:52))rect(c,x-3,y-38,6,7,era===0?'#ffad5f':era===1?'#ffd38b':era===2?'#79d9ef':'#c3f5ff')
+  const back = 9
+  for (let k = 0; k < back; k++) {
+    const x = 40 + k * (W - 80) / (back - 1) + (r() - 0.5) * 20, y = HORIZON + 26 + (k % 2) * 10
+    const v = era === 0 ? (k % 3 === 0 ? 1 : 0) : (k % 3 === 1 ? 1 : 0)
+    prop(v, x, y, 150 + r() * 30)
+    lights.push({ x, y: y - 30, r: 60, color: p.light })
   }
-  for(let i=0;i<4+city*3;i++){
-    const x=116+(i*191+city*43)%770,y=i%2?238:477
-    if(era===0){poly(c,[[x-14,y],[x,y-13],[x+17,y]],'#75655b');rect(c,x-3,y-8,6,4,'#a18b70')}
-    else if(era===1){rect(c,x-13,y-12,26,12,'#63495a');rect(c,x-17,y-17,34,6,i%3?'#a95b66':'#d4a674')}
-    else if(era===2){rect(c,x-11,y-14,22,14,'#34465b');rect(c,x-7,y-11,14,3,'#719db2')}
-    else{poly(c,[[x-12,y],[x,y-19],[x+12,y]],'#304e6d');rect(c,x-4,y-13,8,4,'#72e6ed')}
+  const lx = [500, 250, 760, 500, 500][slot]
+  prop(2, lx, HORIZON + 70, 210)
+  lights.push({ x: lx, y: HORIZON + 30, r: 120, color: p.accent })
+  for (const [i, j] of [[6, -2], [6, 2], [6, 6], [6, 10], [2, 5], [10, 5], [-2, 5], [14, 5]] as [number, number][]) {
+    const { x, y } = tilePos(i, j)
+    if (x < 20 || x > W - 20 || y < HORIZON + 20 || y > H - 10) continue
+    if (era === 0) lights.push({ x, y: y - 16, r: 90, color: '#ff8a3c', fire: true })
+    else { prop(3, x + 20, y + 4, era >= 2 ? 64 : 58); lights.push({ x: x + 20, y: y - 40, r: 95, color: p.light }) }
   }
-  cache.set(index,canvas);return canvas
+  for (let k = 0; k < 6; k++) {
+    const x = k < 3 ? 30 + k * 60 : W - 30 - (k - 3) * 60, y = HORIZON + 170 + (k % 3) * 110
+    if (y > H - 20) continue
+    prop(era === 0 ? 3 : k % 2, x, y, era === 0 ? 120 : 130)
+  }
+
+  c.globalCompositeOperation = 'lighter'
+  for (const l of lights) glow(c, l.x, l.y + 30, l.r, l.color + '44')
+  c.globalCompositeOperation = 'source-over'
+  c.fillStyle = 'rgba(20,10,50,0.22)'; c.fillRect(0, HORIZON, W, H - HORIZON)
+
+  lightsCache.set(index, lights)
+  cache.set(index, canvas)
+  return canvas
 }
-export function activity(c:CanvasRenderingContext2D,era:number,t:number,city:number){
-  if(era===0){
-    for(let i=0;i<5;i++){
-      const x=97+i*196,y=i%2?227:465,flicker=Math.sin(t*11+i*3)*4
-      if(ready(sprites.effects))effect(c,0,Math.floor(t*9+i),x,y-21,44)
-      else{poly(c,[[x-5,y-18],[x,y-34-flicker],[x+6,y-18]],'#ff924d');poly(c,[[x-2,y-18],[x,y-28-flicker*.5],[x+3,y-18]],'#ffe391')}
-      for(let j=0;j<3;j++)rect(c,x+Math.sin(t+j*3+i)*8,y-44-(t*12+j*13)%20,2,2,'#ffc477')
-    }
-    const animalX=100+(t*12+city*67)%850
-    rect(c,animalX,478,25,12,'#493544');rect(c,animalX+18,472,10,10,'#493544');rect(c,animalX+2,488,3,7,'#392c3b');rect(c,animalX+18,488,3,7,'#392c3b')
-  }else if(era===1){
-    for(let i=0;i<6;i++){
-      const x=84+i*165,y=i%2?230:466
-      poly(c,[[x,y-45],[x+17+Math.sin(t*3+i)*4,y-41],[x,y-34]],i%2?'#bf536b':'#dda16e')
-    }
-    const cartX=100+(t*18+city*101)%840
-    rect(c,cartX,474,27,11,'#8d5b52');rect(c,cartX+2,485,5,5,'#292739');rect(c,cartX+21,485,5,5,'#292739')
-  }else if(era===2){
-    for(let lane=0;lane<2;lane++){
-      const x=lane?950-(t*65+city*49)%1050:(t*57+city*79)%1050-50,y=lane?445:335
-      if(!prop(c,2,2,x+18,y+17,67)){rect(c,x,y,34,13,lane?'#bc4d71':'#4f9abb');rect(c,x+5,y-4,20,5,'#9dd3e1')}
-    }
-  }else{
-    for(let i=0;i<4;i++){
-      const x=(t*(i%2?35:-29)+i*273+4000)%1100-50,y=195+i*66+Math.sin(t*3+i)*9
-      poly(c,[[x-13,y],[x,y-7],[x+13,y],[x,y+4]],'#58bcc8')
-      rect(c,x-3,y-3,6,3,'#e3a5ff')
-      rect(c,x-7,y+5,14,2,'#a1f5f3')
-    }
-    const hoverX=(t*59+city*77)%1070-50
-    prop(c,3,2,hoverX,429+Math.sin(t*4)*6,78)
+
+/** Animated ambience: flickering lights, fires, embers, drifting fog, drones. */
+export function activity(c: CanvasRenderingContext2D, era: number, t: number, index: number) {
+  const lights = cityLights(index)
+  c.globalCompositeOperation = 'lighter'
+  lights.forEach((l, i) => glow(c, l.x, l.y, l.r * 0.45, l.color + '55', 0.6 + Math.sin(t * 7 + i * 3) * 0.15 + Math.sin(t * 13 + i) * 0.08))
+  c.globalCompositeOperation = 'source-over'
+  lights.forEach((l, i) => { if (l.fire) fire(c, l.x, l.y + 14, 1, t + i) })
+  const col = era === 0 ? '#ffb070' : era === 1 ? '#ffd890' : era === 2 ? '#ff7ac8' : '#8ff7ff'
+  for (let i = 0; i < 26; i++) {
+    const k = (t * 0.08 + i * 0.137) % 1
+    const x = (i * 97.3 + Math.sin(t * 0.7 + i) * 30 + W) % W, y = H - k * (H - HORIZON)
+    c.globalAlpha = Math.sin(k * Math.PI) * 0.7; rect(c, x, y, 2, 2, col)
   }
+  c.globalAlpha = 1
+  for (let i = 0; i < 3; i++) {
+    const x = ((t * (8 + i * 4) + i * 400) % (W + 600)) - 300, y = HORIZON + 60 + i * 110
+    const g = c.createRadialGradient(x, y, 10, x, y, 260)
+    g.addColorStop(0, 'rgba(180,160,220,0.08)'); g.addColorStop(1, 'rgba(0,0,0,0)')
+    c.fillStyle = g; c.fillRect(x - 260, y - 60, 520, 120)
+  }
+  if (era === 3) for (let i = 0; i < 3; i++) {
+    const x = (t * (40 + i * 15) + i * 330) % (W + 100) - 50, y = HORIZON - 30 + i * 20 + Math.sin(t * 3 + i) * 6
+    glow(c, x, y, 18, 'rgba(110,247,255,0.5)'); rect(c, x - 6, y - 1, 12, 3, '#9ff')
+  }
+}
+
+export function fire(c: CanvasRenderingContext2D, x: number, y: number, s: number, t: number) {
+  // stone ring + crossed logs
+  c.fillStyle = '#2a2230'; c.beginPath(); c.ellipse(x, y + 1 * s, 13 * s, 5 * s, 0, 0, Math.PI * 2); c.fill()
+  for (let k = 0; k < 7; k++) { const a = (k / 7) * Math.PI * 2; c.fillStyle = k % 2 ? '#6a6070' : '#554c5c'; c.beginPath(); c.ellipse(x + Math.cos(a) * 11 * s, y + Math.sin(a) * 4 * s, 3.5 * s, 2.2 * s, 0, 0, Math.PI * 2); c.fill() }
+  c.strokeStyle = '#4a2a18'; c.lineWidth = 3 * s; c.beginPath(); c.moveTo(x - 7 * s, y + 1 * s); c.lineTo(x + 7 * s, y - 3 * s); c.moveTo(x + 7 * s, y + 1 * s); c.lineTo(x - 7 * s, y - 3 * s); c.stroke()
+  // flames (normal blending so they keep their colour), then a soft additive glow
+  for (let k = 0; k < 3; k++) {
+    const h = (15 + Math.sin(t * 11 + k * 2) * 4) * s * (1 - k * 0.25), w = (6.5 - k * 1.8) * s
+    c.fillStyle = ['#d8341a', '#ff8a1a', '#ffd060'][k]
+    c.beginPath(); c.moveTo(x - w, y - 1 * s); c.quadraticCurveTo(x - w * 0.8, y - h * 0.55, x + Math.sin(t * 9 + k) * 2 * s, y - h); c.quadraticCurveTo(x + w * 0.8, y - h * 0.55, x + w, y - 1 * s); c.fill()
+  }
+  c.globalCompositeOperation = 'lighter'
+  glow(c, x, y - 8 * s, 30 * s, 'rgba(255,120,40,0.35)')
+  c.globalCompositeOperation = 'source-over'
+  for (let k = 0; k < 3; k++) { const e = (t * 0.9 + k * 0.33) % 1; c.globalAlpha = 1 - e; rect(c, x + Math.sin(t * 3 + k * 2) * 5 * s, y - 14 * s - e * 26 * s, 2, 2, '#ffc070') }
+  c.globalAlpha = 1
+}
+
+/** Procedural bat silhouette with flapping wings. */
+export function bat(c: CanvasRenderingContext2D, x: number, y: number, s: number, t: number, color = '#1a0a1a') {
+  const f = Math.sin(t * 22) * 0.8
+  c.fillStyle = color
+  c.beginPath()
+  c.moveTo(x, y)
+  c.quadraticCurveTo(x - 6 * s, y - 6 * s * f - 2 * s, x - 14 * s, y - 2 * s - 6 * s * f)
+  c.quadraticCurveTo(x - 9 * s, y + 1 * s, x - 3 * s, y + 3 * s)
+  c.lineTo(x, y + 5 * s)
+  c.lineTo(x + 3 * s, y + 3 * s)
+  c.quadraticCurveTo(x + 9 * s, y + 1 * s, x + 14 * s, y - 2 * s - 6 * s * f)
+  c.quadraticCurveTo(x + 6 * s, y - 6 * s * f - 2 * s, x, y)
+  c.fill()
+  rect(c, x - 2 * s, y + 1 * s, 1.5 * s, 1.5 * s, '#ff3a5a'); rect(c, x + 0.5 * s, y + 1 * s, 1.5 * s, 1.5 * s, '#ff3a5a')
 }
