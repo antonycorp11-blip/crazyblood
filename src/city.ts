@@ -1,9 +1,9 @@
 import { ERAS } from './incremental/data'
 import type { Human, Night } from './incremental/game'
 
-export const W=1000,H=560
+import { camera, W, H } from './viewport'
 const cache=new Map<number,HTMLCanvasElement>()
-const spriteFiles={humans:'humans.png',humansPre:'humans-prehistoric.png',humansNow:'humans-contemporary.png',humansFuture:'humans-future.png',vampires:'vampires.png',props:'city-props.png',terrain:'terrain.png',effects:'effects.png',sky:'day-night.png'} as const
+const spriteFiles={humans:'humans.png',vampires:'vampires.png',props:'city-props.png',terrain:'terrain.png',effects:'effects.png',sky:'day-night.png'} as const
 const sprites={} as Record<keyof typeof spriteFiles,HTMLImageElement>
 for(const key of Object.keys(spriteFiles) as Array<keyof typeof spriteFiles>){
   const img=new Image()
@@ -12,7 +12,7 @@ for(const key of Object.keys(spriteFiles) as Array<keyof typeof spriteFiles>){
   sprites[key]=img
 }
 const ready=(img:HTMLImageElement)=>img.complete&&img.naturalWidth>0
-const humanAtlas=(era:number)=>[sprites.humansPre,sprites.humans,sprites.humansNow,sprites.humansFuture][era]
+const humanAtlas=()=>sprites.humans
 const effect=(c:CanvasRenderingContext2D,row:number,frame:number,x:number,y:number,size:number)=>{
   if(!ready(sprites.effects))return
   c.drawImage(sprites.effects,Math.floor(frame)%8*64,row*64,64,64,x-size/2,y-size/2,size,size)
@@ -73,7 +73,7 @@ function scenery(index:number){
     if(x<-40||x>1040||y<145||y>570)continue
     const noise=(i*71+j*43+index*17)%9
     const colors=era===0?['#67544b','#6a574c','#725c4f']:era===1?['#5c4c5b','#625160','#675467']:era===2?['#455667','#4b5d6c','#506170']:['#405774','#455e7b','#4c6784']
-    if(ready(sprites.terrain))c.drawImage(sprites.terrain,Math.abs(noise)%4*72,era*36,72,36,x-36,y-18,72,36)
+    if(ready(sprites.terrain))c.drawImage(sprites.terrain,(Math.abs(noise)%7===0?2:1)*72,era*36,72,36,x-36,y-18,72,36)
     else diamond(c,x,y,colors[Math.abs(noise)%3])
     if(noise===0&&y>240&&y<520)rect(c,x-1,y-1,3,3,era===3?'#8ce7eb':'#998578')
   }
@@ -81,7 +81,7 @@ function scenery(index:number){
   if(city===0){
     for(const x of [125,257,740,865]){
       rect(c,x-4,206,8,29,era===0?'#45383a':era===1?'#4b3949':era===2?'#364d61':'#336173')
-      if(era<2){poly(c,[[x-22,211],[x,178],[x+22,211]],era===0?'#3c5749':'#315565');poly(c,[[x-17,197],[x,170],[x+17,197]],era===0?'#4e6a50':'#3d6870')}
+      if(era<2){prop(c,0,3,x,231,100)}
       else{rect(c,x-13,183,26,5,accent);rect(c,x-8,191,16,4,'#b9f2e8')}
     }
   }else if(city===1){
@@ -165,43 +165,25 @@ function activity(c:CanvasRenderingContext2D,era:number,t:number,city:number){
     prop(c,3,2,hoverX,429+Math.sin(t*4)*6,78)
   }
 }
-function human(c:CanvasRenderingContext2D,h:Human,era:number,t:number){
-  const x=Math.round(h.x),y=Math.round(h.y),walk=Math.sin(t*10+h.id)*2
-  const named=h.named,guard=h.kind==='hunter'||named&&h.maxHp>15
-  const outfit=era===0?['#ad865d','#ad755e','#987358','#bd9b69','#9c644f'][h.shade]:era===1?['#5e86a5','#bd7a64','#8b779e','#6b9c8c','#b99e73'][h.shade]:era===2?['#5b8eaa','#ad6185','#628d73','#a98d61','#786aa6'][h.shade]:['#6de0d9','#d179ca','#7a9eee','#b3a4d6','#d199a5'][h.shade]
+function human(c:CanvasRenderingContext2D,h:Human,t:number){
+  const atlas=humanAtlas();if(!ready(atlas))return
+  const x=Math.round(h.x),y=Math.round(h.y),named=h.named
   c.fillStyle='#11152277';c.beginPath();c.ellipse(x,y+1,13,5,0,0,Math.PI*2);c.fill()
-  if(named){c.fillStyle='#ffd979';c.beginPath();c.arc(x,y-17,23+Math.sin(t*4)*2,0,Math.PI*2);c.globalAlpha=.18;c.fill();c.globalAlpha=1}
-  const atlas=humanAtlas(era)
-  if(ready(atlas)){
-    const row=named?4:h.kind==='runner'?1:h.kind==='hunter'?2:h.kind==='rare'?3:0
-    const frame=h.flash>0?4:h.panic>0?3:Math.floor(t*5+h.id)%3
-    c.drawImage(atlas,frame*96,row*96,96,96,x-26,y-60,52,62)
-    if(named||h.hp<h.maxHp){rect(c,x-19,y-68,38,5,'#1c1729');rect(c,x-18,y-67,36*h.hp/h.maxHp,3,named?'#ffd77b':'#f36783')}
-    if(named){rect(c,x-3,y-77,6,6,'#ffe7a1');rect(c,x-1,y-81,2,4,'#ffe7a1')}
-    if(h.kind==='hunter'&&h.attack<=.25)rect(c,x-3,y-75,6,5,'#ff6e6e')
-    return
-  }
-  rect(c,x-5,y-10,4,10+walk,'#282438');rect(c,x+2,y-10,4,10-walk,'#282438')
-  rect(c,x-7,y-25,14,17,guard?era>=2?'#486d8a':'#766370':outfit)
-  rect(c,x-10,y-23,3,12,guard?'#b1becd':outfit);rect(c,x+7,y-23,3,12,guard?'#b1becd':outfit)
-  rect(c,x-6,y-35,12,11,era===0?'#c68f6a':'#dbac89')
-  rect(c,x-6,y-36,12,4,guard?'#303d54':named?'#f6d27e':'#493849')
-  rect(c,x-3,y-30,2,2,'#29253a');rect(c,x+2,y-30,2,2,'#29253a')
-  if(era===0){rect(c,x-8,y-25,16,3,'#e2bd87')}else if(era===3){rect(c,x-6,y-22,12,3,'#72ecf1')}
-  if(h.kind==='runner')rect(c,x-5,y-39,10,2,'#ffca7b')
-  if(h.kind==='rare')rect(c,x-7,y-42,14,3,'#e1a0ff')
-  if(guard){rect(c,x+10,y-23,3,18,'#e3b36b');rect(c,x+8,y-25,7,4,'#f9d78d')}
-  if(h.flash>0){c.globalAlpha=h.flash*3;c.fillStyle='#fff1df';c.fillRect(x-10,y-39,21,39);c.globalAlpha=1}
-  if(named||h.hp<h.maxHp){rect(c,x-14,y-48,28,4,'#1c1729');rect(c,x-13,y-47,26*h.hp/h.maxHp,2,named?'#ffd77b':'#f36783')}
-  if(named){rect(c,x-3,y-58,6,6,'#ffe7a1');rect(c,x-1,y-62,2,4,'#ffe7a1')}
-  if(h.kind==='hunter'&&h.attack<=.25){rect(c,x-3,y-55,6,5,'#ff6e6e')}
+  if(named){c.fillStyle='#ffd979';c.beginPath();c.arc(x,y-25,30+Math.sin(t*4)*2,0,Math.PI*2);c.globalAlpha=.18;c.fill();c.globalAlpha=1}
+  const row=named?4:h.kind==='runner'?1:h.kind==='hunter'?2:h.kind==='rare'?3:0
+  const frame=h.flash>0?4:h.panic>0?[1,3,2,3][Math.floor(t*10)%4]:Math.floor(t*5+h.id)%3
+  c.save();c.translate(x,y);if(h.vx<0)c.scale(-1,1)
+  c.drawImage(atlas,frame*96,row*96,96,96,-26,-60,52,62);c.restore()
+  if(named||h.hp<h.maxHp){rect(c,x-19,y-68,38,5,'#1c1729');rect(c,x-18,y-67,36*h.hp/h.maxHp,3,named?'#ffd77b':'#f36783')}
+  if(named){rect(c,x-3,y-77,6,6,'#ffe7a1');rect(c,x-1,y-81,2,4,'#ffe7a1')}
+  if(h.windup>0){c.strokeStyle='#ff607a';c.lineWidth=3;c.beginPath();c.arc(x,y-27,32,-Math.PI/2,-Math.PI/2+Math.PI*2*(1-h.windup/.8));c.stroke();c.font='bold 15px sans-serif';c.fillStyle='#ffb685';c.textAlign='center';c.fillText('!',x,y-78)}
 }
 function vampire(c:CanvasRenderingContext2D,night:Night,t:number){
   const x=Math.round(night.vampireX),y=Math.round(night.vampireY),flap=Math.sin(t*13)*5
   c.fillStyle='#090b19aa';c.beginPath();c.ellipse(x,y+2,18,6,0,0,Math.PI*2);c.fill()
   if(ready(sprites.vampires)){
     const moving=Math.hypot(night.vampireTargetX-night.vampireX,night.vampireTargetY-night.vampireY)>18
-    const frame=night.vampireHurt>0?5:night.vampireAttack>0?4:moving?3:Math.floor(t*4)%3
+    const frame=night.vampireHurt>0?5:night.vampireAttack>.15?4:night.vampireAttack>0?3:moving?[1,3,2,3][Math.floor(t*9)%4]:Math.floor(t*4)%3
     c.drawImage(sprites.vampires,frame*112,night.district.era*112,112,112,x-42,y-86,84,89)
     return
   }
@@ -215,10 +197,11 @@ function vampire(c:CanvasRenderingContext2D,night:Night,t:number){
   c.strokeStyle='#f36b83';c.lineWidth=1;c.globalAlpha=.4;c.beginPath();c.arc(x,y-21,23+Math.sin(t*4)*2,0,Math.PI*2);c.stroke();c.globalAlpha=1
 }
 export function drawCity(c:CanvasRenderingContext2D,night:Night,t:number,preview=false){
-  const scale=c.canvas.height/H,offset=(c.canvas.width-W*scale)/2
+  const {scale,x:offset,y:offsetY}=camera(c.canvas.width,c.canvas.height)
   c.setTransform(1,0,0,1,0,0)
   c.clearRect(0,0,c.canvas.width,c.canvas.height)
-  c.setTransform(scale,0,0,scale,offset,0)
+  c.setTransform(scale,0,0,scale,offset,offsetY)
+  c.imageSmoothingEnabled=false
   const progress=Math.min(1,preview ? .12+.025*Math.sin(t*.25) : night.elapsed/night.duration)
   if(ready(sprites.sky)){
     const position=progress*7,frame=Math.min(7,Math.floor(position)),next=Math.min(7,frame+1)
@@ -232,13 +215,16 @@ export function drawCity(c:CanvasRenderingContext2D,night:Night,t:number,preview
   for(let i=0;i<10;i++){const x=88+i*91,y=i%2?220:465;c.globalAlpha=.13+Math.sin(t*5+i)*.04;c.fillStyle=era>=2?'#76daef':'#ffb56d';c.beginPath();c.ellipse(x,y+7,20,9,0,0,Math.PI*2);c.fill()}
   c.globalAlpha=1
   activity(c,era,t,night.district.city)
+  const focus=night.humans.find(h=>h.id===night.focusId)
+  if(focus&&night.focusUntil>0){c.strokeStyle=focus.windup>0?'#ff5577':'#ffe5af';c.lineWidth=2;c.beginPath();c.ellipse(focus.x,focus.y,23,9,0,0,Math.PI*2);c.stroke()}
   const people=[...night.humans].sort((a,b)=>a.y-b.y)
-  for(const h of people)human(c,h,era,t)
-  vampire(c,night,t)
+  let vampireDrawn=false
+  for(const h of people){if(!vampireDrawn&&h.y>night.vampireY){vampire(c,night,t);vampireDrawn=true}human(c,h,t)}
+  if(!vampireDrawn)vampire(c,night,t)
   for(const a of night.animations){
     if(a.row<5)effect(c,a.row,Math.floor(a.age/a.duration*8),a.x,a.y,a.size)
     else{
-      const atlas=humanAtlas(era)
+      const atlas=humanAtlas()
       if(ready(atlas)){
         c.globalAlpha=1-a.age/a.duration
         c.drawImage(atlas,5*96,(a.row-5)*96,96,96,a.x-a.size/2,a.y-a.size,a.size,a.size)

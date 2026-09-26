@@ -10,20 +10,20 @@ export const BRANCHES: Record<Branch,{label:string;subtitle:string;color:string}
 const X=[125,345,565,785,1005], Y=[142,270,398,526,654,782]
 const s=(id:string,name:string,branch:Branch,icon:string,description:string,effect:string,max:number,cost:number,scale:number,col:number,row:number,requires?:string):Skill=>({id,name,branch,icon,description,effect,max,cost,scale,requires,x:X[col],y:Y[row]})
 export const SKILLS:Skill[]=[
-  s('moon','Lua tardia','night','☾','O amanhecer demora a chegar.','+7 s de noite',7,28,1.78,0,0),
+  s('moon','Lua tardia','night','☾','O amanhecer demora a chegar.','+6 s de noite',10,45,1.55,0,0),
   s('mist','Passos na névoa','night','◈','A névoa atrasa a fuga dos humanos.','Humanos 8% mais lentos',5,55,1.95,0,1,'moon'),
   s('stalk','Sombra paciente','night','✧','O alvo do contrato demora mais a escapar.','+6 s para o alvo',4,110,2.1,0,2,'mist'),
   s('vigor','Sangue antigo','night','♥','Seu corpo aguenta mais contra-ataques.','+2 de vida',6,155,1.95,0,3,'stalk'),
-  s('dusk','Crepúsculo eterno','night','☀','Estenda o último instante da noite.','+15 s de noite',3,420,2.6,0,4,'vigor'),
-  s('immortal','Noite sem fim','night','✺','A lua resiste ao amanhecer.','+35 s de noite',2,3500,3,0,5,'dusk'),
-  s('fang','Presas afiadas','fang','◆','Cada toque causa mais dano.','+1 dano por toque',7,35,1.85,1,0),
+  s('dusk','Crepúsculo eterno','night','☀','Estenda o último instante da noite.','+12 s de noite',4,700,2.1,0,4,'vigor'),
+  s('immortal','Noite sem fim','night','✺','A lua resiste ao amanhecer.','+30 s de noite',3,5500,2.5,0,5,'dusk'),
+  s('fang','Presas afiadas','fang','◆','Cada toque causa mais dano.','+1 força de captura',18,55,1.48,1,0),
   s('reach','Garras longas','fang','⌁','Atinge alvos próximos do toque.','+10 px de alcance',5,65,1.9,1,1,'fang'),
   s('drain','Sede de caça','fang','◉','Capturas restauram sua vida.','Cura 1 a cada 5 capturas',4,125,2.1,1,2,'reach'),
   s('cleave','Garra carmesim','fang','✣','Seu golpe alcança humanos próximos.','+1 alvo por toque',4,280,2,1,3,'drain'),
-  s('frenzy','Frenesi','fang','✹','Combos aumentam seu dano.','+1 dano a cada 12 combo',3,680,2.4,1,4,'cleave'),
+  s('frenzy','Frenesi','fang','✹','Combos aumentam seu dano.','+2 dano por combo; captura mais rápida',3,680,2.4,1,4,'cleave'),
   s('reaper','Ceifador noturno','fang','✦','Capturas explodem na multidão.','+2 alvos na explosão',2,4200,3,1,5,'frenzy'),
-  s('thrall','Primeiro servo','servants','♟','Um servo captura humanos por você.','+1 servo',8,75,2,2,0,'moon'),
-  s('training','Treino da corte','servants','⚔','Servos dominam humanos resistentes.','+1 força dos servos',6,95,1.9,2,1,'thrall'),
+  s('thrall','Primeiro servo','servants','♟','Um servo captura humanos por você.','+1 servo',10,130,1.75,2,0,'moon'),
+  s('training','Treino da corte','servants','⚔','Servos dominam humanos resistentes.','+2 força dos servos',12,150,1.6,2,1,'thrall'),
   s('haste','Ordem de caça','servants','➤','Servos atacam mais vezes.','13% mais velocidade',6,170,2,2,2,'training'),
   s('pack','Matilha de sombras','servants','♜','Sua corte cresce a cada noite.','+2 servos',5,420,2,2,3,'haste'),
   s('elite','Guarda rubra','servants','♛','Servos priorizam alvos de missão.','+2 dano em alvos nomeados',3,900,2.3,2,4,'pack'),
@@ -57,17 +57,19 @@ export const ERAS=[
   {name:'Era Futura',years:'ano 2280',icon:'✧',color:'#8ce7e4',biome:'cúpulas, drones e cidades de luz',cities:[
     ['Colônia Prisma','AX-7, a exploradora','runner'],['Porto Orbital','Sentinela Voss','hunter'],['Núcleo Sintético','Dra. Nyx','rare'],['Bastião Quântico','Comandante Zero','hunter'],['Nova Aurora','Imperatriz Solaris','hunter']]},
 ] as const
-export type District={name:string;tag:string;era:number;city:number;population:number;rate:number;baseHp:number;blood:number;target:string;targetType:'runner'|'hunter'|'rare';targetHp:number;targetReward:number;quota:number;intro:string}
+export type District={name:string;tag:string;era:number;city:number;population:number;rate:number;baseHp:number;blood:number;target:string;targetType:'runner'|'hunter'|'rare';targetHp:number;targetReward:number;quota:number;domination:number;seals:number;intro:string}
 export const DISTRICTS:District[]=ERAS.flatMap((era,eraIndex)=>era.cities.map((city,cityIndex)=>({
   name:city[0],tag:era.name,era:eraIndex,city:cityIndex,
-  population:[38,70,115,180,280][cityIndex],
-  rate:[1.75,3.6,6.2,11,18.5][cityIndex]*(1+eraIndex*.13),
-  baseHp:[2,4,6,9,13][cityIndex]+eraIndex,
-  blood:Math.round([4,7,11,17,25][cityIndex]*(1+eraIndex*.28)),
+  population:[55,100,160,230,300][cityIndex],
+  rate:[1.8,4.2,9,18,30][cityIndex]*(1+eraIndex*.13),
+  baseHp:[4,9,17,28,45][cityIndex]+eraIndex*3,
+  blood:Math.round([3,5,8,12,18][cityIndex]*(1+eraIndex*.28)),
   target:city[1],targetType:city[2],
-  targetHp:[12,26,45,80,140][cityIndex]+eraIndex*10,
-  targetReward:Math.round([55,130,300,650,1300][cityIndex]*(1+eraIndex*.3)),
-  quota:[25,50,90,160,300][cityIndex],
-  intro:eraIndex===3&&cityIndex===4?'Objetivo final: capture a Imperatriz Solaris e 1.000 humanos na mesma noite; sobreviva até o amanhecer.':'Capture '+city[1]+' e '+[25,50,90,160,300][cityIndex]+' humanos na mesma noite. Sobreviva até o amanhecer para abrir a próxima cidade.',
+  targetHp:[28,65,130,260,500][cityIndex]+eraIndex*20,
+  targetReward:Math.round([25,65,150,320,750][cityIndex]*(1+eraIndex*.3)),
+  quota:[70,180,450,900,1800][cityIndex],
+  domination:Math.round([350,1400,4200,12000,35000][cityIndex]*(1+eraIndex*.35)),
+  seals:[4,4,5,6,7][cityIndex],
+  intro:'Acumule domínio e contratos. Complete a cota em uma noite e sobreviva ao amanhecer.',
 })))
 export const skillCost=(skill:Skill,level:number)=>Math.round(skill.cost*Math.pow(skill.scale,level))

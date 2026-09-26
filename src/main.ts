@@ -1,186 +1,141 @@
 import './style.css'
-import { BRANCHES, DISTRICTS, ERAS, SKILLS, skillCost } from './incremental/data'
+import { BRANCHES, DISTRICTS, ERAS, SKILLS, skillCost, type Branch } from './incremental/data'
 import { Night, available, buy, hibernate, level, load, persist } from './incremental/game'
-import { drawCity, H, W } from './city'
+import { drawCity } from './city'
+import { camera } from './viewport'
 
 const app=document.querySelector<HTMLDivElement>('#app')!
-let save=load()
-let mode:'tree'|'city'|'hunt'='city'
+const save=load()
+let screen:'map'|'upgrades'='map'
 let night:Night|null=null
-let preview:Night|null=null
+let ambient=new Night(save)
 let selected='moon'
-let lastFrame=performance.now()
-let lastPaint=0
-let lastHud=0
-let tipUntil=0
-let audioCtx:AudioContext|null=null
-const fmt=(n:number)=>new Intl.NumberFormat('pt-BR').format(Math.floor(n))
-const pct=(n:number,d:number)=>Math.min(100,Math.round(n/d*100))
-const selectedDistrict=()=>DISTRICTS[save.district]
-const requiredCaptures=()=>save.district===19?1000:selectedDistrict().quota
-
+let branch:Branch|'roots'='roots'
+let lastFrame=performance.now(),lastPaint=0,lastHud=0
+let held=false,aim={x:0,y:0},pointerId:number|null=null
+let audio:AudioContext|null=null
+const fmt=(n:number)=>new Intl.NumberFormat('pt-BR',{notation:n>=10000?'compact':'standard',maximumFractionDigits:1}).format(Math.floor(n))
+const d=()=>DISTRICTS[save.district]
+const quota=()=>save.district===19?3000:d().quota
+const active=()=>!!night&&!night.ended
+const visible=(skill:typeof SKILLS[number])=>!skill.requires||level(save,skill.requires)>0
+const affordable=()=>SKILLS.filter(s=>available(save,s.id)&&save.blood>=skillCost(s,level(save,s.id))).length
+const icon=(index:number,cls='')=>`<span class="art-icon ${cls}" style="--ix:${index%6};--iy:${Math.floor(index/6)}" aria-hidden="true"></span>`
 function sound(name:string){
-  if(save.muted||!name)return
+  if(save.muted)return
   try{
-    audioCtx??=new AudioContext()
-    if(audioCtx.state==='suspended')audioCtx.resume()
-    const at=audioCtx.currentTime,osc=audioCtx.createOscillator(),gain=audioCtx.createGain()
-    const tones:Record<string,[number,number,number]>={
-      hit:[240,145,.09],capture:[470,760,.16],servant:[350,520,.08],hurt:[130,60,.25],
-      mission:[420,620,.35],missionComplete:[540,980,.5],pulse:[160,520,.4],buy:[420,850,.25],escape:[500,150,.35],
-    }
-    const [from,to,duration]=tones[name]||tones.capture
-    osc.type=name==='hurt'?'sawtooth':'triangle'
-    osc.frequency.setValueAtTime(from,at);osc.frequency.exponentialRampToValueAtTime(Math.max(1,to),at+duration)
-    gain.gain.setValueAtTime(.0001,at);gain.gain.exponentialRampToValueAtTime(name==='hurt'?.1:.055,at+.015);gain.gain.exponentialRampToValueAtTime(.0001,at+duration)
-    osc.connect(gain);gain.connect(audioCtx.destination);osc.start(at);osc.stop(at+duration+.01)
+    audio??=new AudioContext();if(audio.state==='suspended')void audio.resume()
+    const notes:Record<string,[number,number,number]>={hit:[210,130,.06],capture:[420,740,.13],hurt:[140,50,.2],buy:[420,920,.23],pulse:[130,740,.3],missionComplete:[620,1100,.35]}
+    const [from,to,len]=notes[name]||[350,510,.09],at=audio.currentTime,o=audio.createOscillator(),g=audio.createGain()
+    o.type=name==='hurt'?'sawtooth':'triangle';o.frequency.setValueAtTime(from,at);o.frequency.exponentialRampToValueAtTime(to,at+len)
+    g.gain.setValueAtTime(.04,at);g.gain.exponentialRampToValueAtTime(.0001,at+len);o.connect(g);g.connect(audio.destination);o.start();o.stop(at+len)
   }catch{}
 }
-function header(){
-  return '<header class="topbar"><button class="brand" data-action="city"><span class="brand-mark">☾</span><span><strong>CRAZYBLOOD</strong><small>AS ERAS DA CAÇADA</small></span></button>'+
-    '<nav class="game-menu"><button data-action="city" class="'+(mode==='city'?'active':'')+'">MAPA</button><button data-action="tree" class="'+(mode==='tree'?'active':'')+'">RAÍZES</button></nav>'+
-    '<div class="top-info"><span class="blood-chip"><i class="mini-drop"></i><strong>'+fmt(save.blood)+'</strong></span><span class="relic-chip">✦ '+save.relics+'</span></div>'+
-    '<button class="sound-button" data-action="mute" aria-label="Alternar som">'+(save.muted?'♪̸':'♫')+'</button></header>'
+function top(){return `<header class="game-top"><span class="wordmark">☾ CRAZYBLOOD</span><span class="wallet">${icon(8)}<b id="wallet">${fmt(save.blood)}</b></span><span class="echo">✦ ${save.relics}</span><button class="sound" data-action="mute" aria-label="Alternar som">${save.muted?'♫̸':'♫'}</button></header>`}
+function nav(){return `<nav class="screen-tabs" aria-label="Telas do jogo"><button data-screen="map" class="${screen==='map'?'current':''}"><span>⌖</span> MAPA</button><button data-screen="upgrades" ${active()?'disabled':''} class="${screen==='upgrades'?'current':''}"><span>✦</span> UPGRADES <i id="affordable">${affordable()||''}</i></button></nav>`}
+function objectives(){
+  const progress=save.progress[save.district]||0,seals=save.contracts[save.district]||0,best=active()?night!.captures:save.bestByCity[save.district]||0
+  return `<div class="objectives" aria-label="Requisitos para conquistar a cidade">${[['Domínio',progress,d().domination],['Contratos',seals,d().seals],['Na mesma noite',best,quota()]].map(([label,n,total],i)=>`<div class="objective"><span>${label}</span><b id="objective-${i}">${fmt(Number(n))}<em>/${fmt(Number(total))}</em></b><div class="meter"><i id="meter-${i}" style="width:${Math.min(100,Number(n)/Number(total)*100)}%"></i></div></div>`).join('')}</div>`
 }
-function skillTree(){
-  const skill=SKILLS.find(x=>x.id===selected)||SKILLS[0]
-  const lv=level(save,skill.id),max=lv>=skill.max,cost=skillCost(skill,lv),unlocked=available(save,skill.id)
-  const branch=BRANCHES[skill.branch]
-  const revealed=(x:typeof SKILLS[number])=>!x.requires||level(save,x.requires)>0
-  // Five fixed columns (one chain per branch) that always fit the screen — no scrolling anywhere.
-  const columns=(Object.keys(BRANCHES) as (keyof typeof BRANCHES)[]).map(key=>{
-    const b=BRANCHES[key],chain=SKILLS.filter(x=>x.branch===key)
-    const owned=chain.reduce((n,x)=>n+level(save,x.id),0)
-    const tiles=chain.map(x=>{
-      const index=SKILLS.indexOf(x)
-      if(!revealed(x))return '<div class="skill-tile hidden" aria-hidden="true"><span class="tile-mystery">?</span></div>'
-      const l=level(save,x.id),can=available(save,x.id),afford=can&&save.blood>=skillCost(x,l)
-      return '<button class="skill-tile '+(l?'owned ':'')+(afford?'affordable ':'')+(l>=x.max?'maxed ':'')+(selected===x.id?'selected':'')+'" data-skill="'+x.id+'" aria-label="'+x.name+'" style="--ix:'+(index%6)+';--iy:'+Math.floor(index/6)+'">'+
-        '<span class="tile-icon"></span><span class="tile-name">'+x.name+'</span><span class="tile-level">'+l+'/'+x.max+'</span></button>'
-    }).join('')
-    const any=chain.some(revealed)
-    return '<div class="skill-column '+(any?'':'dormant')+'" style="--branch:'+b.color+'"><div class="column-head"><b>'+b.label+'</b><small>'+(any?owned+' níveis':'adormecido')+'</small></div><div class="column-tiles">'+tiles+'</div></div>'
-  }).join('')
-  const lockText=!unlocked&&!max?'Requer '+SKILLS.find(x=>x.id===skill.requires)?.name:save.blood<cost?'Sangue insuficiente':'Disponível'
-  const detailIndex=SKILLS.indexOf(skill)
-  return '<section class="tree-page"><div class="section-heading"><div><span class="eyebrow">SANTUÁRIO DAS RAÍZES</span><h1>A árvore da noite</h1></div><div class="tree-stat"><b>'+SKILLS.reduce((n,x)=>n+level(save,x.id),0)+'</b><span>poderes<br>despertos</span></div></div>'+
-    '<div class="tree-layout"><div class="skill-columns">'+columns+'</div>'+
-    '<aside class="skill-detail" style="--branch:'+branch.color+'"><div class="detail-glyph" style="--ix:'+(detailIndex%6)+';--iy:'+Math.floor(detailIndex/6)+'"></div>'+
-    '<div class="detail-text"><div class="detail-branch">'+branch.label+' · NÍVEL '+lv+'/'+skill.max+'</div><h2>'+skill.name+'</h2><p>'+skill.description+'</p></div>'+
-    '<div class="effect-box"><span>POR NÍVEL</span><strong>'+skill.effect+'</strong></div>'+
-    '<button class="buy-button" data-action="buy" data-id="'+skill.id+'" '+(!unlocked||save.blood<cost?'disabled':'')+'>'+(max?'MAXIMIZADO':unlocked?'DESPERTAR · ♦ '+fmt(cost):lockText)+'</button></aside></div></section>'
+function dock(){
+  if(active())return `<div class="hunt-controls"><button data-action="power" id="power" class="power-button" disabled>${icon(24)}<span id="power-label">ÉCLIPSE · 0%</span></button><span class="control-tip">Segure e arraste para capturar.<br><b>Vermelho? Troque de alvo.</b></span><button class="retreat" data-action="retreat" aria-label="Encerrar caçada">↩</button></div>`
+  const ready=save.era<3&&save.cleared[save.era*5+4]
+  const result=night?.ended?`${night.won?'✦ Eclipse total: as quatro eras são suas':night.qualified?'✦ Cidade conquistada':night.endReason==='defeat'?'Você foi repelido':night.endReason==='lockdown'?'Alerta máximo':night.targetEscaped?'O alvo escapou':'A noite terminou'} · ${night.captures} capturas · +${fmt(night.blood)} sangue`:'Conquiste os 3 objetivos e sobreviva ao amanhecer.'
+  return `<div class="run-summary" role="status">${result}</div><div class="launch-row"><div class="next-night"><b>${22+6*level(save,'moon')+12*level(save,'dusk')+30*level(save,'immortal')+save.relics*4}s</b><span>de noite</span><b>${1+save.relics+level(save,'fang')}</b><span>força</span></div><button class="primary" data-action="${ready?'hibernate':'start'}">${ready?'HIBERNAR →':night?.ended?'CAÇAR NOVAMENTE':'INICIAR CAÇADA'} <span>➜</span></button></div>`
 }
-function eraTimeline(){
-  return '<div class="era-timeline">'+ERAS.map((era,i)=>'<span class="era-step '+(i===save.era?'current':i<save.era?'past':'future')+'" style="--era:'+era.color+'">'+era.icon+'</span>').join('')+'</div>'
+function mapScreen(){
+  return `<section class="map-screen" aria-label="Mapa e caçada"><div class="map-heading"><div><span class="era-label">${ERAS[save.era].name} · ERA ${save.era+1}/4</span><h1>${d().name}</h1></div><div class="city-path" aria-label="Cidades desta era">${ERAS[save.era].cities.map((c,i)=>{const id=save.era*5+i;return `<button data-city="${id}" aria-label="${c[0]}" ${id>save.unlocked||active()?'disabled':''} class="${id===save.district?'selected':''} ${save.cleared[id]?'complete':''}">${save.cleared[id]?'✓':id>save.unlocked?'·':i+1}</button>`}).join('')}</div></div>${objectives()}<div class="arena"><canvas id="world" aria-label="Cidade: segure sobre humanos para capturar"></canvas><div class="arena-shade"></div><div class="night-hud ${active()?'':'quiet'}"><div class="clock"><span id="timer">${active()?Math.ceil(night!.remaining)+'s':'☾'}</span><i id="timebar"></i></div><span id="health">${active()?'♥'.repeat(night!.health):'A LONGA CAÇADA'}</span><span id="combo">${active()?'COMBO 0':'20 cidades · 4 eras'}</span></div><div class="target-banner" id="target">${active()?'Encontre o alvo dourado':d().target+' · alvo do contrato'}</div><div class="field-hint" id="field-hint">${active()?'Segure sobre um humano para capturar':'Capture, evolua e conquiste a era'}</div><div class="alarm-track"><i id="alarm"></i></div></div><footer class="map-dock">${dock()}</footer></section>`
 }
-function cityPage(){
-  const era=ERAS[save.era],d=selectedDistrict(),best=save.bestByCity[save.district]||0,required=requiredCaptures()
-  const nodes=era.cities.map((_,i)=>{
-    const id=save.era*5+i,city=DISTRICTS[id],locked=id>save.unlocked,clear=save.cleared[id]
-    return '<button class="city-node '+(id===save.district?'selected ':'')+(locked?'locked':'')+'" data-city="'+id+'" '+(locked?'disabled':'')+'>'+
-      '<span class="city-node-seal">'+(clear?'✓':locked?'⌁':'0'+(i+1))+'</span><span class="city-node-name">'+city.name+'</span></button>'
-  }).join('')
-  const canHibernate=save.era<3&&save.cleared[save.era*5+4]
-  preview=new Night(save)
-  return '<section class="city-page"><div class="city-scene"><canvas id="game-canvas" width="'+W+'" height="'+H+'"></canvas><div class="scene-vignette"></div></div>'+
-    '<div class="city-ui"><div class="chapter-line"><span>CRÔNICA 0'+(save.era+1)+' / 04</span>'+eraTimeline()+'<span>'+era.years+'</span></div>'+
-    '<div class="city-hero"><div class="city-story"><span class="eyebrow">'+era.name+' · CIDADE '+(d.city+1)+' DE 5</span><h1>'+d.name+'</h1><p>'+era.biome+'</p>'+
-    '<div class="vampire-portrait" style="background-position:0 '+(-save.era*168)+'px" aria-hidden="true"></div></div>'+
-    '<div class="mission-scroll"><span class="eyebrow">CONTRATO DE CAÇA</span><h2>'+d.target+'</h2><p>'+d.intro+'</p>'+
-    '<div class="mission-rule"><strong>'+fmt(best)+' <small>/ '+fmt(required)+'</small></strong><span>MELHOR NOITE NESTA CIDADE</span></div>'+
-    '<div class="mission-meter"><i style="width:'+pct(best,required)+'%"></i></div>'+
-    '<div class="mission-note">'+(save.cleared[save.district]?'✦ CIDADE DOMINADA':'☾ Alvo, cota e amanhecer na mesma noite')+'</div>'+
-    '<button class="launch-button" data-action="start">INICIAR CAÇADA <span>➜</span></button></div></div>'+
-    '<div class="city-bottom"><div class="city-route"><span class="route-title">CAMINHO DA ERA</span><div class="route-nodes">'+nodes+'</div></div>'+
-    (canHibernate?'<button class="hibernate-button" data-action="hibernate">✦ HIBERNAR · PRÓXIMA ERA</button>':'<span class="era-hint">Conquiste as cinco cidades para hibernar</span>')+
-    '</div></div></section>'
-}
-function resultCard(){
-  if(!night||!night.ended)return ''
-  const cleared=night.qualified,final=night.won
-  const reason=night.endReason==='defeat'?'Você caiu em combate':night.endReason==='lockdown'?'A cidade entrou em alerta':night.endReason==='retreat'?'Você recuou':night.targetEscaped?'O alvo escapou':night.captures<night.requiredCaptures?'A cota ainda não foi alcançada':'A lua se pôs'
-  return '<div class="result-overlay"><div class="result-card"><span class="eyebrow">'+(final?'ECLIPSE TOTAL':cleared?'CIDADE CONQUISTADA':'NOITE ENCERRADA')+'</span><h2>'+(final?'A história pertence aos vampiros':cleared?'A cidade é sua':reason)+'</h2>'+
-    '<div class="result-stats"><div><b>'+fmt(night.captures)+'</b><small>CAPTURAS</small></div><div><b>♦ '+fmt(night.blood)+'</b><small>SANGUE</small></div><div><b>'+(night.mission?'✓':'—')+'</b><small>ALVO</small></div></div>'+
-    '<p>'+(final?'Imperatriz capturada e 1.000 humanos em uma única noite.':cleared?'Contrato, cota e amanhecer concluídos. A próxima cidade foi aberta.':'Sua melhor noite aqui: '+fmt(save.bestByCity[save.district]||0)+' / '+fmt(night.requiredCaptures)+'. O sangue foi guardado para a próxima tentativa.')+'</p>'+
-    '<div class="result-actions"><button data-action="tree">DESPERTAR PODERES</button><button data-action="city">VOLTAR AO MAPA →</button></div></div></div>'
-}
-function huntPage(){
-  const d=selectedDistrict(),era=ERAS[d.era]
-  return '<section class="hunt-page"><div class="hunt-hud"><div class="hud-place"><span>'+era.icon+' '+era.name+'</span><strong>'+d.name+'</strong></div>'+
-    '<div class="hud-metric"><small>AMANHECER</small><b id="timer">00:00</b><div class="hud-progress"><i id="timebar"></i></div></div>'+
-    '<div class="hud-metric"><small>VIDA</small><b id="health">♥ ♥ ♥ ♥ ♥</b></div>'+
-    '<div class="hud-metric"><small>CAPTURAS</small><b id="captures">0</b></div>'+
-    '<div class="hud-metric"><small>ALERTA</small><b id="alarm">0%</b><div class="alarm-progress"><i id="alarmbar"></i></div></div></div>'+
-    '<div class="stage-frame live-stage"><canvas id="game-canvas" width="'+W+'" height="'+H+'"></canvas><div class="stage-top"><span id="mission-state">✦ '+d.target+'</span><span id="combo-state">COMBO 0</span></div>'+
-    '<div class="stage-bottom"><span id="tap-tip">Toque nos humanos • evite os guardas • encontre o alvo dourado</span><button data-action="retreat">RECUAR ↗</button></div></div>'+
-    '<div class="hunt-footer"><div><b>COTA DA NOITE</b><span id="quota-state">0 / '+fmt(requiredCaptures())+'</span></div><div><b>SANGUE</b><span id="blood-earned">♦ 0</span></div><div><b>SERVOS</b><span>'+night?.servants+' em campo</span></div></div>'+resultCard()+'</section>'
+function upgradesScreen(){
+  const skill=SKILLS.find(s=>s.id===selected)!,lv=level(save,selected),b=BRANCHES[skill.branch]
+  const branches=(Object.keys(BRANCHES) as Branch[]).filter(key=>SKILLS.some(s=>s.branch===key&&visible(s)))
+  const nodes=SKILLS.filter(s=>visible(s)&&(branch==='roots'?!s.requires:s.branch===branch))
+  const horizontal=innerWidth>650&&innerHeight<500
+  const positions=nodes.map((_,i)=>horizontal?{x:(i+.5)*100/nodes.length,y:47}:nodes.length<=2?{x:nodes.length===1?50:30+i*40,y:47}:{x:27+(i%2)*46,y:18+Math.floor(i/2)*30})
+  const links=nodes.map((s,i)=>{const parent=nodes.findIndex(n=>n.id===s.requires);if(parent<0)return '';return `<path d="M ${positions[parent].x} ${positions[parent].y} Q 50 ${(positions[parent].y+positions[i].y)/2} ${positions[i].x} ${positions[i].y}"/>`}).join('')
+  const can=available(save,selected),cost=skillCost(skill,lv)
+  return `<section class="upgrade-screen" aria-label="Upgrades"><div class="upgrade-heading"><span class="era-label">SANGUE TRANSFORMADO EM PODER</span><h1>Raízes da noite</h1><p>Cada despertar revela a próxima ramificação.</p></div><div class="branch-tabs" aria-label="Ramos de habilidades"><button data-branch="roots" class="${branch==='roots'?'current':''}">RAIZ</button>${branches.map(key=>`<button data-branch="${key}" class="${branch===key?'current':''}" style="--branch:${BRANCHES[key].color}">${BRANCHES[key].label}</button>`).join('')}</div><div class="constellation" style="--branch:${branch==='roots'?'#ee91b7':BRANCHES[branch].color}"><div class="root-halo"></div><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${links}</svg>${nodes.map((s,i)=>{const l=level(save,s.id),index=SKILLS.indexOf(s);return `<button class="skill-orb ${selected===s.id?'selected':''} ${l?'owned':''} ${available(save,s.id)&&save.blood>=skillCost(s,l)?'affordable':''}" style="left:${positions[i].x}%;top:${positions[i].y}%;--branch:${BRANCHES[s.branch].color}" data-skill="${s.id}" aria-label="${s.name}">${icon(index)}<b>${s.name}</b><small>${l}/${s.max}</small></button>`}).join('')}<span class="tree-caption">${nodes.length<2?'Um novo poder está ao seu alcance':'Siga o sangue. Desperte o próximo poder.'}</span></div><footer class="upgrade-dock" style="--branch:${b.color}">${icon(SKILLS.indexOf(skill),'detail-icon')}<div class="skill-description"><span>${b.label} · NÍVEL ${lv}/${skill.max}</span><h2>${skill.name}</h2><p>${skill.effect}</p></div><button class="primary buy" data-action="buy" ${!can||save.blood<cost?'disabled':''}>${lv>=skill.max?'MAXIMIZADO':'EVOLUIR · '+fmt(cost)+' ♦'}</button><p class="skill-flavor">${skill.description}</p></footer></section>`
 }
 function render(){
-  document.body.className='mode-'+mode
-  app.innerHTML=header()+'<main>'+(mode==='tree'?skillTree():mode==='city'?cityPage():huntPage())+'</main>'
-  if(mode==='city'||mode==='hunt')paint()
-  updateHUD()
+  held=false;pointerId=null
+  app.innerHTML=`<div class="game-shell">${top()}<main>${screen==='map'?mapScreen():upgradesScreen()}</main>${nav()}</div>`
+  if(screen==='map'){paint();updateHUD()}
 }
 function paint(){
-  const canvas=document.querySelector<HTMLCanvasElement>('#game-canvas')
-  if(!canvas)return
-  const dpr=Math.min(2,window.devicePixelRatio||1)
-  const width=Math.max(1,Math.round(canvas.clientWidth*dpr)),height=Math.max(1,Math.round(canvas.clientHeight*dpr))
+  const canvas=document.querySelector<HTMLCanvasElement>('#world');if(!canvas)return
+  const rect=canvas.getBoundingClientRect(),ratio=Math.min(1.5,devicePixelRatio||1)
+  const width=Math.round(rect.width*ratio),height=Math.round(rect.height*ratio)
+  if(!width||!height)return
   if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height}
-  const context=canvas.getContext('2d')!
-  drawCity(context,mode==='hunt'&&night?night:preview||new Night(save),performance.now()/1000,mode==='city')
+  const world=active()?night!:ambient
+  world.setViewport(rect.width,rect.height)
+  drawCity(canvas.getContext('2d')!,world,performance.now()/1000,!active())
 }
 function updateHUD(){
-  if(mode!=='hunt'||!night)return
-  const rem=night.remaining,mm=String(Math.floor(rem/60)).padStart(2,'0'),ss=String(Math.ceil(rem%60)).padStart(2,'0')
-  const set=(id:string,text:string)=>{const e=document.getElementById(id);if(e)e.textContent=text}
-  set('timer',mm+':'+ss);set('health','♥ '.repeat(night.health)+'♡ '.repeat(night.maxHealth-night.health))
-  set('captures',fmt(night.captures));set('blood-earned','♦ '+fmt(night.blood));set('alarm',Math.floor(night.alarm)+'%')
-  set('combo-state','COMBO '+night.combo);set('mission-state',night.mission?'✓ ALVO CAPTURADO':night.targetEscaped?'✕ ALVO ESCAPOU':'✦ '+selectedDistrict().target)
-  set('quota-state',fmt(night.captures)+' / '+fmt(night.requiredCaptures))
-  const bar=document.getElementById('timebar');if(bar)bar.style.width=pct(rem,night.duration)+'%'
-  const alarmbar=document.getElementById('alarmbar');if(alarmbar)alarmbar.style.width=Math.floor(night.alarm)+'%'
+  const set=(id:string,value:string)=>{const el=document.getElementById(id);if(el)el.textContent=value}
+  set('wallet',fmt(save.blood));set('affordable',String(affordable()||''))
+  if(!active())return
+  const n=night!
+  set('timer',Math.ceil(n.remaining)+'s');set('health',n.health>7?`♥ ${n.health}/${n.maxHealth}`:'♥'.repeat(n.health)+'♡'.repeat(n.maxHealth-n.health));set('combo',n.combo>1?`×${n.combo} COMBO`:`${n.captures} capturas`)
+  const named=n.humans.find(h=>h.named)
+  set('target',n.mission?'✦ Contrato capturado':n.targetEscaped?'Alvo escapou · continue colhendo sangue':named?`${d().target} · foge em ${Math.max(0,Math.ceil(14+level(save,'stalk')*6-named.life))}s`:`${d().target} chega em ${Math.ceil(n.missionTimer)}s`)
+  const current=n.humans.find(h=>h.id===n.focusId)
+  set('field-hint',current?.windup?'⚠ CONTRA-ATAQUE! TROQUE DE ALVO':n.charge>=100&&n.powerCooldown<=0?'ÉCLIPSE PRONTO · use o poder abaixo':`+${fmt(n.blood)} sangue · ${n.servants} servos`)
+  for(const [i,value,total] of [[0,save.progress[save.district]||0,d().domination],[1,save.contracts[save.district]||0,d().seals],[2,n.captures,quota()]]){
+    const el=document.getElementById('objective-'+i);if(el)el.innerHTML=`${fmt(value)}<em>/${fmt(total)}</em>`
+    const meter=document.getElementById('meter-'+i);if(meter)meter.style.width=Math.min(100,value/total*100)+'%'
+  }
+  const time=document.getElementById('timebar');if(time)time.style.width=n.remaining/n.duration*100+'%'
+  const alarm=document.getElementById('alarm');if(alarm)alarm.style.width=n.alarm+'%'
+  const power=document.getElementById('power') as HTMLButtonElement|null;if(power){power.disabled=n.charge<100||n.powerCooldown>0;power.style.setProperty('--charge',n.charge+'%')}
+  set('power-label',n.powerCooldown>0?`ÉCLIPSE · ${Math.ceil(n.powerCooldown)}s`:n.charge>=100?'SOLTAR ÉCLIPSE':`ÉCLIPSE · ${Math.floor(n.charge)}%`)
+}
+function strike(){
+  if(!active())return
+  const canvas=document.querySelector<HTMLCanvasElement>('#world');if(!canvas)return
+  const rect=canvas.getBoundingClientRect(),cam=camera(rect.width,rect.height)
+  night!.click((aim.x-rect.left-cam.x)/cam.scale,(aim.y-rect.top-cam.y)/cam.scale,Math.min(40,24/cam.scale))
 }
 function frame(now:number){
-  const dt=(now-lastFrame)/1000;lastFrame=now
-  if(mode==='hunt'&&night&&!night.ended){
-    night.update(dt)
-    if(night.lastSound){sound(night.lastSound);night.lastSound=''}
+  const dt=Math.min(.06,(now-lastFrame)/1000);lastFrame=now
+  if(screen==='map'){
+    if(active()){
+      if(held)strike()
+      night!.update(dt)
+      if(night!.lastSound){sound(night!.lastSound);night!.lastSound=''}
+      if(night!.ended){ambient=new Night(save);render()}
+    }else{
+      const [left,right]=ambient.horizontalBounds,[top,bottom]=ambient.verticalBounds
+      for(const h of ambient.humans){h.x+=h.vx*dt;h.y+=h.vy*dt;if(h.x<left||h.x>right)h.vx*=-1;if(h.y<top||h.y>bottom)h.vy*=-1;h.x=Math.max(left,Math.min(right,h.x));h.y=Math.max(top,Math.min(bottom,h.y))}
+    }
     if(now-lastPaint>33){paint();lastPaint=now}
-    if(now-lastHud>90){updateHUD();lastHud=now}
-    if(tipUntil&&now>tipUntil){const tip=document.getElementById('tap-tip');if(tip)tip.textContent='Toque nos humanos • evite os guardas • encontre o alvo dourado';tipUntil=0}
-    if(night.ended)render()
-  }else if(mode==='city'&&now-lastPaint>33){paint();lastPaint=now}
+    if(now-lastHud>100){updateHUD();lastHud=now}
+  }
   requestAnimationFrame(frame)
 }
 app.addEventListener('click',event=>{
-  const target=event.target as HTMLElement
-  const skillButton=target.closest<HTMLElement>('[data-skill]')
-  if(skillButton){selected=skillButton.dataset.skill!;render();return}
-  const cityButton=target.closest<HTMLElement>('[data-city]')
-  if(cityButton){const id=Number(cityButton.dataset.city);if(id<=save.unlocked&&Math.floor(id/5)===save.era){save.district=id;persist(save);render()}return}
-  const button=target.closest<HTMLElement>('[data-action]')
-  if(!button)return
-  const action=button.dataset.action
-  if(action==='mute'){save.muted=!save.muted;persist(save);render()}
-  if(action==='tree'){if(mode==='hunt'&&night&&!night.ended)night.finish();mode='tree';render()}
-  if(action==='city'){if(mode==='hunt'&&night&&!night.ended)night.finish();mode='city';render()}
-  if(action==='start'){night=new Night(save);mode='hunt';sound('mission');render()}
-  if(action==='retreat'&&night){night.finish();render()}
-  if(action==='buy'&&buy(save,button.dataset.id!)){sound('buy');render()}
-  if(action==='hibernate'&&hibernate(save)){selected='moon';night=null;mode='tree';sound('missionComplete');render()}
+  const target=event.target as HTMLElement,button=target.closest<HTMLButtonElement>('button');if(!button||button.disabled)return
+  if(button.dataset.screen){if(active())return;screen=button.dataset.screen as typeof screen;render();return}
+  if(button.dataset.branch){branch=button.dataset.branch as typeof branch;const first=SKILLS.find(s=>visible(s)&&(branch==='roots'?!s.requires:s.branch===branch));if(first)selected=first.id;render();return}
+  if(button.dataset.skill){selected=button.dataset.skill;render();return}
+  if(button.dataset.city){const id=Number(button.dataset.city);if(!active()&&id<=save.unlocked&&Math.floor(id/5)===save.era){save.district=id;night=null;ambient=new Night(save);persist(save);render()}return}
+  switch(button.dataset.action){
+    case 'start':{const rect=document.querySelector('#world')!.getBoundingClientRect();night=new Night(save,{width:rect.width,height:rect.height});render();sound('mission');break}
+    case 'retreat':night?.finish();ambient=new Night(save);render();break
+    case 'power':if(night?.usePower())sound('pulse');updateHUD();break
+    case 'buy':if(buy(save,selected)){sound('buy');branch=SKILLS.find(s=>s.id===selected)!.branch;render()}break
+    case 'hibernate':if(hibernate(save)){night=null;ambient=new Night(save);screen='upgrades';branch='roots';selected='moon';render()}break
+    case 'mute':save.muted=!save.muted;persist(save);button.textContent=save.muted?'♫̸':'♫';break
+  }
 })
 app.addEventListener('pointerdown',event=>{
-  const canvas=(event.target as HTMLElement).closest<HTMLCanvasElement>('canvas')
-  if(!canvas||mode!=='hunt'||!night||night.ended)return
-  event.preventDefault()
-  const rect=canvas.getBoundingClientRect(),scale=rect.height/H
-  const x=W/2+(event.clientX-rect.left-rect.width/2)/scale,y=(event.clientY-rect.top)/scale
-  const hit=night.click(x,y,rect.width<600?62:46)
-  const tip=document.getElementById('tap-tip');if(tip)tip.textContent=hit?'✦ ALVO ATINGIDO':'◇ NENHUM ALVO'
-  tipUntil=performance.now()+850
-  if(night.lastSound){sound(night.lastSound);night.lastSound=''}
-  paint();updateHUD()
+  if(!(event.target instanceof HTMLCanvasElement)||!active())return
+  event.preventDefault();held=true;pointerId=event.pointerId;aim={x:event.clientX,y:event.clientY};event.target.setPointerCapture(event.pointerId);strike()
 })
-render()
-requestAnimationFrame(frame)
+app.addEventListener('pointermove',event=>{if(held&&event.pointerId===pointerId)aim={x:event.clientX,y:event.clientY}})
+const release=()=>{held=false;pointerId=null;if(night)night.focusUntil=0}
+window.addEventListener('pointerup',release);window.addEventListener('pointercancel',release);window.addEventListener('blur',release)
+document.addEventListener('visibilitychange',()=>{release();persist(save)})
+window.addEventListener('resize',()=>{release();if(screen==='upgrades')render()})
+window.addEventListener('keydown',event=>{if(event.code==='Space'&&active()){event.preventDefault();if(night!.usePower())sound('pulse')}})
+render();requestAnimationFrame(frame)
