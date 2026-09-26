@@ -38,9 +38,11 @@ function wall() {
   return cv
 }
 
-export function drawLair(c: CanvasRenderingContext2D, s: LairState, t: number) {
-  const { scale, x: ox, y: oy } = camera(c.canvas.width, c.canvas.height)
-  c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, c.canvas.width, c.canvas.height)
+/** `focusX` (canvas px) re-centres the throne when a side panel covers the middle of the screen. */
+export function drawLair(c: CanvasRenderingContext2D, s: LairState, t: number, focusX?: number) {
+  const cam = camera(c.canvas.width, c.canvas.height), { scale, y: oy } = cam
+  const ox = focusX === undefined ? cam.x : focusX - 500 * scale
+  c.setTransform(1, 0, 0, 1, 0, 0); c.fillStyle = '#0d0812'; c.fillRect(0, 0, c.canvas.width, c.canvas.height)
   c.setTransform(scale, 0, 0, scale, ox, oy); c.imageSmoothingEnabled = false
   const accent = ERAS[s.era].color
   c.drawImage(wall(), 0, 0, W, H, 0, 0, W, H)

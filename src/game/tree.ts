@@ -7,7 +7,7 @@ export type Stat =
   | 'nightTime' | 'maxPop' | 'spawnPct' | 'weaken' | 'bloodPct' | 'vialChance' | 'teethChance' | 'shardChance'
   | 'lootPct' | 'magnet' | 'dropLife' | 'shinyChance' | 'shinyValue' | 'explodeChance' | 'explodeDmg' | 'chain'
   | 'bats' | 'batDmg' | 'batRate' | 'bossDmg' | 'terrorPct' | 'dice' | 'reroll' | 'pactChoices' | 'comboDmg'
-  | 'dmgMult' | 'bloodMult'
+  | 'dmgMult' | 'bloodMult' | 'moveSpeed'
 
 export interface TreeNode {
   id: string
@@ -63,6 +63,7 @@ const STAT_TEXT: Record<Stat, (v: number) => string> = {
   pactChoices: (v) => `+${v} opção de pacto`,
   comboDmg: (v) => `+${v}% de dano a cada 10 de combo`,
   dmgMult: (v) => `Dano ×${round(Math.pow(1.12, v))} (acumula sem limite)`,
+  moveSpeed: (v) => `+${v} de velocidade de movimento`,
   bloodMult: (v) => `Sangue ×${round(Math.pow(1.1, v))} (acumula sem limite)`,
 }
 
@@ -149,6 +150,10 @@ const ROWS: Row[] = [
   ['bridge3', 'Sede de Ouro', 21, 3, 2, 'teeth2', 'teeth', 12, 5, 'teethChance', 2],
   ['bridge4', 'Ninhada', 13, -2, 2, 'shard1', 'blood', 250, 5, 'spawnPct', 12],
   // ── Outer ring: legendary nodes (mostly Sangue Puro)
+  // ── Speed: the vampire runs faster (matters most with the joystick)
+  ['speed1', 'Passos Sombrios', 14, 1, -2, 'critm1', 'blood', 6, 8, 'moveSpeed', 30],
+  ['speed2', 'Vulto', 14, 2, 3, 'bite2', 'shard', 6, 6, 'moveSpeed', 45],
+  ['speed3', 'Relâmpago Rubro', 14, 5, 2, 'teeth3', 'pure', 2, 5, 'moveSpeed', 70, 2.2],
   ['instinct', 'Instinto Caçador', 10, -2, -2, 'crit1', 'blood', 90, 6, 'critChance', 2],
   ['feast1', 'Gula', 22, 2, -3, 'critm2', 'blood', 600, 8, 'bloodPct', 25],
   ['rate3', 'Tempestade de Presas', 28, 1, -6, 'critm3', 'shard', 40, 6, 'auraRate', 15],

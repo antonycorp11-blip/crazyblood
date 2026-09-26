@@ -8,7 +8,7 @@ import { NODES, NODE_BY_ID, computeStats, describe, type TreeNode } from './game
 import { drawHunt } from './render/world'
 import { drawLair, lairState } from './render/lair'
 import { camera } from './viewport'
-import { sfx, setMuted } from './sound'
+import { ambience, setIntensity, sfx, setMuted, unlockAudio } from './sound'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 if (location.search.includes('reset')) { resetSave(); history.replaceState(null, '', location.pathname) }
@@ -72,7 +72,9 @@ function huntView() {
   <div class="hunt-loot">${(['blood', 'teeth', 'shard', 'pure'] as Resource[]).map((r) => `<span class="loot-line" id="loot-${r}-wrap" ${r === 'blood' ? '' : 'hidden'}>${resIcon(r)}<b id="loot-${r}">0</b></span>`).join('')}</div>
   <button class="round-btn flee-btn" data-action="flee" aria-label="Encerrar noite">✕</button>
   <div class="banner" id="banner"></div>
-  ${save.nights < 3 ? `<div class="hint">${touch ? 'Segure o dedo sobre os humanos · toque para morder' : 'Passe o mouse sobre os humanos · clique para morder'}<small>Recolha o loot brilhante antes que ele suma</small></div>` : ''}
+  <div class="joy" id="joy"><i id="joy-knob"></i></div>
+  <button class="bite-btn" id="bite-btn" aria-label="Morder"><b>MORDER</b></button>
+  ${save.nights < 3 ? `<div class="hint">${touch ? 'Joystick para correr · MORDER para golpe forte' : 'Passe o mouse sobre os humanos · clique para morder'}<small>Recolha o loot brilhante antes que ele suma</small></div>` : ''}
   <div class="pact-mini">${save.pact ? skillIcon(PACTS[save.pact].icon) + PACTS[save.pact].name : c.name}</div>`
 }
 
@@ -192,6 +194,7 @@ function nodeSheet() {
 // ───────────────────────── render + canvas
 function render() {
   app.innerHTML = `<div class="game screen-${screen}"><canvas id="stage"></canvas><div class="ui">${screen === 'lair' ? lairView() : screen === 'hunt' ? huntView() : treeView()}</div>${report ? resultView(report) : ''}</div>`
+  ambience(screen === 'hunt' && !report ? 'hunt' : 'lair')
   if (report) animateResult()
   if (screen === 'tree') bindTree()
   paint(performance.now() / 1000)
@@ -204,7 +207,11 @@ function paint(t: number) {
   if (!w || !h) return
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h }
   const c = canvas.getContext('2d')!
-  if (screen === 'hunt' && hunt) { hunt.setViewport(rect.width, rect.height); drawHunt(c, hunt, t) } else drawLair(c, lairState(save), t)
+  if (screen === 'hunt' && hunt) { hunt.setViewport(rect.width, rect.height); drawHunt(c, hunt, t); return }
+  // landscape phones put the lair menu on the right: keep the throne in the free space on the left
+  const panel = document.querySelector('.lair-panel')?.getBoundingClientRect()
+  const side = panel && panel.left - rect.left > rect.width * 0.3 && panel.top - rect.top < rect.height * 0.5
+  drawLair(c, lairState(save), t, side ? ((panel.left - rect.left) / 2) * ratio : undefined)
 }
 
 function toWorld(clientX: number, clientY: number) {
@@ -220,6 +227,8 @@ function startHunt() {
   const rect = canvas?.getBoundingClientRect()
   hunt = new Hunt(save, rect ? { width: rect.width, height: rect.height } : undefined)
   screen = 'hunt'
+  joy = null; keys.clear()
+  if (matchMedia('(pointer: coarse)').matches) hunt.auraOn = true
   sfx('start')
   render()
 }
@@ -290,25 +299,61 @@ app.addEventListener('click', (e) => {
   }
 })
 
-let touching = false
+// Input — mouse: the vampire chases the cursor, click bites. Touch: floating joystick + bite button.
+const JOY_R = 56
+let joy: { id: number; ox: number; oy: number } | null = null
+function setJoyVisual(x?: number, y?: number, kx = 0, ky = 0) {
+  const base = document.getElementById('joy'), knob = document.getElementById('joy-knob'); if (!base || !knob) return
+  base.classList.toggle('active', x !== undefined)
+  base.style.left = x === undefined ? '' : x + 'px'; base.style.top = y === undefined ? '' : y + 'px'
+  knob.style.transform = `translate(${kx * JOY_R}px, ${ky * JOY_R}px)`
+}
+function biteNow() { if (!hunt || report) return; hunt.tap(); navigator.vibrate?.(12) }
 app.addEventListener('pointerdown', (e) => {
-  if (screen !== 'hunt' || !hunt || report || !(e.target instanceof HTMLCanvasElement)) return
+  if (screen !== 'hunt' || !hunt || report) return
+  unlockAudio()
+  const target = e.target as HTMLElement
+  if (target.closest('#bite-btn')) { e.preventDefault(); target.closest('#bite-btn')!.classList.add('press'); biteNow(); return }
+  if (!(e.target instanceof HTMLCanvasElement)) return
   e.preventDefault()
-  const p = toWorld(e.clientX, e.clientY)
-  touching = true
-  hunt.setAura(p.x, p.y, true)
-  hunt.tap(p.x, p.y)
+  if (e.pointerType === 'mouse') { const p = toWorld(e.clientX, e.clientY); hunt.setAura(p.x, p.y, true); biteNow(); return }
+  if (joy) return
+  const r = app.getBoundingClientRect()
+  joy = { id: e.pointerId, ox: e.clientX, oy: e.clientY }
+  setJoyVisual(e.clientX - r.left, e.clientY - r.top)
+  hunt.steer(0, 0)
 })
 app.addEventListener('pointermove', (e) => {
   if (screen !== 'hunt' || !hunt || report) return
+  if (joy && e.pointerId === joy.id) {
+    let dx = (e.clientX - joy.ox) / JOY_R, dy = (e.clientY - joy.oy) / JOY_R
+    const l = Math.hypot(dx, dy); if (l > 1) { dx /= l; dy /= l }
+    const r = app.getBoundingClientRect()
+    setJoyVisual(joy.ox - r.left, joy.oy - r.top, dx, dy)
+    if (l < 0.15) hunt.steer(0, 0); else hunt.steer(dx, dy)
+    return
+  }
+  if (e.pointerType !== 'mouse') return
   const p = toWorld(e.clientX, e.clientY)
-  // mouse: the aura follows the cursor over the city; touch: only while the finger is down
-  const on = e.pointerType === 'mouse' ? e.target instanceof HTMLCanvasElement : touching
-  hunt.setAura(p.x, p.y, on)
+  hunt.setAura(p.x, p.y, e.target instanceof HTMLCanvasElement)
 })
-const release = (e: PointerEvent) => { touching = false; if (hunt && e.pointerType !== 'mouse') hunt.auraOn = false }
+const release = (e: PointerEvent) => {
+  document.getElementById('bite-btn')?.classList.remove('press')
+  if (joy && e.pointerId === joy.id) { joy = null; setJoyVisual(); hunt?.steer(0, 0) }
+}
 window.addEventListener('pointerup', release)
+window.addEventListener('pointerdown', unlockAudio, { capture: true })
 window.addEventListener('pointercancel', release)
+// keyboard: WASD / arrows run, space bites
+const keys = new Set<string>()
+const KEY_DIR: Record<string, [number, number]> = { KeyW: [0, -1], ArrowUp: [0, -1], KeyS: [0, 1], ArrowDown: [0, 1], KeyA: [-1, 0], ArrowLeft: [-1, 0], KeyD: [1, 0], ArrowRight: [1, 0] }
+function keySteer() { if (!hunt) return; let x = 0, y = 0; for (const k of keys) { x += KEY_DIR[k][0]; y += KEY_DIR[k][1] } hunt.steer(x, y) }
+window.addEventListener('keyup', (e) => { if (keys.delete(e.code)) keySteer() })
+window.addEventListener('keydown', (e) => {
+  if (screen !== 'hunt' || !hunt || report) return
+  if (KEY_DIR[e.code] && !keys.has(e.code)) { keys.add(e.code); keySteer(); e.preventDefault() }
+  if (e.code === 'Space') { e.preventDefault(); biteNow() }
+})
 window.addEventListener('keydown', (e) => { if (e.code === 'Space' && screen !== 'hunt') { e.preventDefault(); startHunt() } })
 document.addEventListener('visibilitychange', () => persist(save))
 window.addEventListener('resize', () => { if (screen === 'tree') refreshTree() })
@@ -317,6 +362,7 @@ function frame(now: number) {
   const dt = Math.min(0.05, (now - lastFrame) / 1000); lastFrame = now
   if (screen === 'hunt' && hunt && !report) {
     hunt.update(dt)
+    setIntensity(hunt.elapsed / hunt.duration)
     for (const s of hunt.sounds) {
       sfx(s, hunt.combo)
       if (s === 'boss') banner(`☠ ${hunt.city.boss.toUpperCase()} APARECEU`, 'boss')

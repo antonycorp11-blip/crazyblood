@@ -31,7 +31,7 @@ function playNight(save) {
     const dx = tx - h.auraX, dy = ty - h.auraY, d = Math.hypot(dx, dy), step = 900 * 0.05
     h.setAura(d > step ? h.auraX + dx / d * step : tx, d > step ? h.auraY + dy / d * step : ty, true)
     tapClock += 0.05
-    if (tapClock > 0.25) { tapClock = 0; h.tap(h.auraX, h.auraY) }
+    if (tapClock > 0.25) { tapClock = 0; h.tap() }
     h.update(0.05)
   }
   return h

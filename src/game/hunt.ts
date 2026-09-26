@@ -60,6 +60,9 @@ export class Hunt {
   sounds: string[] = []
   // aura / vampire
   auraX = 500; auraY = 340; auraOn = false
+  /** Where the player wants the vampire to go (mouse) and the joystick vector (touch, length ≤ 1). */
+  targetX = 500; targetY = 340
+  joyX = 0; joyY = 0
   vampireX = 500; vampireY = 360
   bite = 0
   private tickClock = 0
@@ -84,6 +87,8 @@ export class Hunt {
     return (1 + this.stats.auraDmg) * (1 + this.stats.auraPct / 100) * Math.pow(1.12, this.stats.dmgMult) * this.echoMult * combo * (this.pact === 'fullmoon' ? 1.6 : 1)
   }
   get tickRate() { return 4 * (1 + this.stats.auraRate / 100) }
+  /** Vampire movement speed in world px/s — upgraded in the tree. */
+  get moveSpeed() { return 380 + this.stats.moveSpeed }
   get radius() { return Math.min(150, 48 + this.stats.auraRadius) }
   get critChance() { return Math.min(0.9, 0.05 + this.stats.critChance / 100 + (this.pact === 'frenzy' ? 0.25 : 0)) }
   get critMult() { return 2 + this.stats.critMult }
@@ -120,14 +125,16 @@ export class Hunt {
   }
 
   // ───────── input
-  setAura(x: number, y: number, on: boolean) { this.auraX = x; this.auraY = y; this.auraOn = on }
+  setAura(x: number, y: number, on: boolean) { this.targetX = x; this.targetY = y; this.auraOn = on }
+  /** Virtual joystick: the vampire runs in this direction at moveSpeed × length. */
+  steer(x: number, y: number) { const l = Math.hypot(x, y); const k = l > 1 ? 1 / l : 1; this.joyX = x * k; this.joyY = y * k; this.auraOn = true }
 
-  /** Tap/click: a heavy bite at the point. */
-  tap(x: number, y: number) {
+  /** Tap/click/bite button: a heavy bite where the vampire is. */
+  tap() {
     if (this.ended || this.biteCooldown > 0) return
     this.biteCooldown = 0.18
     this.bite = 0.22
-    this.auraX = x; this.auraY = y
+    const x = this.auraX, y = this.auraY
     const r = 26 + this.stats.biteRadius
     const dmg = this.damage * (3 + this.stats.biteDmg)
     let hit = false
@@ -168,7 +175,17 @@ export class Hunt {
     this.spawnClock += dt
     while (this.spawnClock > 1 / rate) { this.spawnClock -= 1 / rate; this.spawn() }
 
-    // vampire follows the aura
+    // the aura (the vampire's hunting spot) travels at moveSpeed toward the cursor or along the joystick
+    const lim = this.bounds, step = this.moveSpeed * dt
+    if (this.joyX || this.joyY) {
+      this.auraX = Math.max(lim.left - 40, Math.min(lim.right + 40, this.auraX + this.joyX * step))
+      this.auraY = Math.max(lim.top - 70, Math.min(lim.bottom, this.auraY + this.joyY * step))
+      this.targetX = this.auraX; this.targetY = this.auraY
+    } else {
+      const dx = this.targetX - this.auraX, dy = this.targetY - this.auraY, d = Math.hypot(dx, dy)
+      if (d <= step) { this.auraX = this.targetX; this.auraY = this.targetY } else { this.auraX += dx / d * step; this.auraY += dy / d * step }
+    }
+    // vampire body follows the aura
     this.vampireX += (this.auraX - this.vampireX) * Math.min(1, dt * 8)
     this.vampireY += (this.auraY + 26 - this.vampireY) * Math.min(1, dt * 8)
 
