@@ -42,3 +42,128 @@ main{min-height:100dvh}
   .hunt-hud{padding:3px 7px 8px}.hunt-hud>div{padding:2px 7px}.hud-place strong{font-size:12px}.hud-metric b{font-size:13px}.hud-metric small{font-size:7px}.stage-top{top:55px;padding:0 7px}.stage-top span{font-size:8px;padding:4px}.stage-bottom{padding:14px 7px 5px}.hunt-footer{bottom:34px;left:7px}.hunt-footer div{padding:5px}.hunt-footer span{font-size:9px}
   .city-ui{padding-top:70px}.city-hero{min-height:270px}.city-story h1{font-size:40px}.vampire-portrait{display:none}.mission-scroll{padding:17px}.mission-scroll p{font-size:10px}.city-bottom{padding-top:4px}
 }
+
+/* ==========================================================================
+   NO-SCROLL LAYOUT — every screen fits the viewport (phone portrait/landscape, desktop).
+   ========================================================================== */
+html,body{height:100%;overflow:hidden;overscroll-behavior:none}
+#app,main{height:100dvh}
+.city-page,.tree-page,.hunt-page{height:100dvh;min-height:0;overflow:hidden}
+.city-ui{height:100dvh;min-height:0}
+.city-hero{min-height:0}
+
+/* ---------- skill tree: 5 fixed columns ---------- */
+.tree-page{display:flex;flex-direction:column;padding:88px clamp(14px,3vw,48px) 18px;gap:10px;background:linear-gradient(180deg,#120a1ad0,#110918f0 80%),url('/assets/hunt/blood-root-cathedral.png') center top/cover}
+.section-heading{margin:0;width:100%;max-width:1400px;align-self:center}
+.section-heading h1{font-size:clamp(22px,2.6vw,38px);margin:2px 0 0}
+.tree-layout{flex:1;min-height:0;width:100%;max-width:1400px;align-self:center;display:grid;grid-template-columns:minmax(0,1fr) clamp(230px,24vw,320px);gap:14px;align-items:stretch}
+.skill-columns{min-height:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:clamp(4px,1vw,14px);padding:12px clamp(6px,1vw,14px);background:#170d20b8;border:1px solid #99526955;box-shadow:inset 0 0 40px #0008}
+.skill-column{min-height:0;display:flex;flex-direction:column;gap:8px}
+.column-head{text-align:center;padding-bottom:6px;border-bottom:2px solid var(--branch);box-shadow:0 6px 12px -8px var(--branch)}
+.column-head b{display:block;font:800 clamp(10px,1.1vw,15px) Cinzel,serif;color:var(--branch);letter-spacing:.08em}
+.column-head small{display:block;font-size:9px;font-weight:800;color:#d9b8c8;margin-top:2px}
+.skill-column.dormant{opacity:.45}
+.column-tiles{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:space-between;gap:6px;position:relative}
+/* the vertical root that links a branch's powers */
+.column-tiles:before{content:'';position:absolute;top:8%;bottom:8%;left:50%;width:2px;transform:translateX(-50%);background:linear-gradient(var(--branch),#b2769a55);opacity:.55}
+.skill-tile{--ic:clamp(28px,5.4vh,60px);position:relative;z-index:1;flex:1 1 0;min-height:0;max-height:92px;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:3px 2px;border:2px solid #a56d8899;color:#ffe6e5;background:radial-gradient(circle,#32172fe8,#170d20f4 75%);clip-path:polygon(10% 0,90% 0,100% 14%,100% 86%,90% 100%,10% 100%,0 86%,0 14%);transition:transform .15s,filter .15s}
+.skill-tile:hover{filter:brightness(1.18)}
+.skill-tile.owned{border-color:var(--branch);box-shadow:inset 0 0 14px var(--branch)}
+.skill-tile.selected{border-color:#fff;box-shadow:inset 0 0 16px var(--branch),0 0 0 2px var(--branch)}
+.skill-tile.maxed .tile-level{color:#ffd780}
+.skill-tile.affordable{animation:nodePulse 1.8s ease-in-out infinite}
+.skill-tile.hidden{opacity:.55;border-style:dashed;border-color:#7a557066;background:#140c1c99}
+.tile-mystery{font:800 18px Cinzel,serif;color:#8f6c85}
+.tile-icon{flex:none;width:var(--ic);height:var(--ic);background-image:url('/assets/sprites/skill-icons.png');background-size:calc(var(--ic)*6) calc(var(--ic)*5);background-position:calc(var(--ix)*var(--ic)*-1) calc(var(--iy)*var(--ic)*-1);image-rendering:pixelated}
+.tile-name{font:700 clamp(8px,.85vw,11px) Cinzel,serif;text-align:center;line-height:1.05;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile-level{font-size:9px;font-weight:900;color:#e6bbca}
+
+.skill-detail{position:relative;top:auto;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px;overflow:hidden}
+.detail-glyph{--ic:96px;width:var(--ic);height:var(--ic);margin:0;background-size:calc(var(--ic)*6) calc(var(--ic)*5);background-position:calc(var(--ix)*var(--ic)*-1) calc(var(--iy)*var(--ic)*-1);transform:none}
+.detail-text{text-align:center}
+.skill-detail h2{font-size:clamp(17px,1.6vw,22px);margin-top:4px}
+.skill-detail p{margin-top:4px}
+.effect-box{margin:0;width:100%;padding:8px}
+.buy-button{margin:0}
+.tree-stat b{font-size:clamp(20px,2.4vw,34px)}
+
+/* ---------- city route: always 5 across ---------- */
+@media(max-width:650px){
+  .route-nodes{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));overflow:visible;gap:2px;padding:0}
+  .city-node{min-width:0;max-width:none;padding:0}
+  .city-node-seal{width:32px;height:32px;font-size:12px}
+  .city-node-name{font-size:7.5px;overflow-wrap:anywhere}
+  .route-nodes:before{top:16px}
+}
+
+/* ---------- phone portrait: tree columns icon-only, detail as a bottom card ---------- */
+@media(max-width:650px){
+  .tree-page{padding:70px 10px 10px;gap:8px}
+  .section-heading .eyebrow{display:none}
+  .section-heading h1{font-size:21px}
+  .tree-layout{display:flex;flex-direction:column;gap:8px}
+  .skill-columns{flex:1;padding:8px 4px;gap:3px}
+  .column-head b{font-size:9px;letter-spacing:.02em}
+  .column-head small{font-size:7px}
+  .tile-name{display:none}
+  .skill-tile{--ic:clamp(26px,4.4vh,40px)}
+  .skill-detail{flex:none;display:grid;grid-template-columns:64px 1fr;grid-template-rows:auto auto auto;align-items:center;gap:6px 10px;padding:10px 12px}
+  .detail-glyph{--ic:64px;grid-row:1/3;filter:drop-shadow(0 0 10px var(--branch))}
+  .detail-text{text-align:left}
+  .detail-branch{text-align:left;font-size:8px}
+  .skill-detail h2{font-size:17px;text-align:left}
+  .skill-detail p{font-size:11px;text-align:left;line-height:1.35}
+  .effect-box{grid-column:2;padding:4px 0;text-align:left;border:0}
+  .effect-box span{display:none}
+  .effect-box strong{font-size:12px;margin:0}
+  .buy-button{grid-column:1/-1;padding:12px 8px}
+}
+
+/* ---------- phone landscape / short screens ---------- */
+@media(max-height:520px){
+  .tree-page{padding:66px 10px 8px;gap:6px}
+  .section-heading{display:none}
+  .tree-layout{grid-template-columns:minmax(0,1fr) 210px;gap:8px}
+  .skill-columns{padding:6px;gap:4px}
+  .skill-column{gap:4px}
+  .column-head{padding-bottom:3px}
+  .column-head small{display:none}
+  .column-tiles{gap:3px}
+  .tile-name{display:none}
+  .skill-tile{--ic:clamp(20px,6.5vh,34px);flex-direction:row;gap:4px;padding:1px}
+  .skill-detail{padding:8px;gap:5px}
+  .detail-glyph{--ic:52px}
+  .skill-detail h2{font-size:15px}
+  .skill-detail p{font-size:10px;line-height:1.3}
+  .effect-box{padding:4px}
+  .effect-box strong{font-size:11px}
+  .buy-button{padding:9px 6px}
+}
+
+/* ---------- city screen on short landscape screens (phones sideways) ---------- */
+@media(max-height:520px) and (min-width:651px){
+  .city-ui{padding:62px clamp(14px,3vw,30px) 8px;gap:6px}
+  .chapter-line{display:none}
+  .city-hero{flex:1;min-height:0;align-items:center;gap:16px}
+  .city-story h1{font-size:clamp(28px,6vh,40px);margin:4px 0}
+  .city-story p{font-size:10px}
+  .mission-scroll{width:min(300px,40vw);min-width:250px;padding:12px 16px 12px;max-height:100%;align-self:center}
+  .mission-scroll:before{inset:6px}
+  .mission-scroll h2{font-size:17px;margin:4px 0 6px}
+  .mission-scroll p{font-size:10px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .mission-rule{margin-top:6px}
+  .mission-rule strong{font-size:18px}
+  .mission-rule strong small{font-size:11px}
+  .mission-note{display:none}
+  .mission-meter{margin:4px 0 8px}
+  .launch-button{padding:9px 12px;font-size:12px;box-shadow:0 5px 0 #72213d}
+  .launch-button span{font-size:18px}
+  .city-bottom{padding-top:4px;gap:10px}
+  .route-title{display:none}
+  .route-nodes{margin-top:2px}
+  .city-node{gap:3px}
+  .city-node-seal{width:30px;height:30px;font-size:11px}
+  .route-nodes:before{top:15px}
+  .era-hint{display:none}
+  .hibernate-button{padding:8px 10px;font-size:10px}
+}

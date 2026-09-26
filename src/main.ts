@@ -46,31 +46,29 @@ function skillTree(){
   const skill=SKILLS.find(x=>x.id===selected)||SKILLS[0]
   const lv=level(save,skill.id),max=lv>=skill.max,cost=skillCost(skill,lv),unlocked=available(save,skill.id)
   const branch=BRANCHES[skill.branch]
-  const visible=SKILLS.filter(x=>!x.requires||level(save,x.requires)>0)
-  const boardHeight=Math.max(440,Math.max(...visible.map(x=>x.y))+125)
-  const paths=visible.map(x=>{
-    const a=x.requires?SKILLS.find(v=>v.id===x.requires):null
-    const x1=a?a.x:565,y1=a?a.y:31
-    const acquired=level(save,x.id)>0
-    return '<path d="M '+x1+' '+y1+' C '+x1+' '+(y1+54)+' '+x.x+' '+(x.y-55)+' '+x.x+' '+x.y+'" class="'+(acquired?'lit':'')+'" style="--branch:'+BRANCHES[x.branch].color+'"/>'
-  }).join('')
-  const labels=Object.entries(BRANCHES).filter(([key])=>visible.filter(x=>x.branch===key).length>1).map(([key,b])=>'<div class="branch-label" style="left:'+({'night':125,'fang':345,'servants':565,'blood':785,'eclipse':1005} as Record<string,number>)[key]+'px;--branch:'+b.color+'"><b>'+b.label+'</b><small>'+b.subtitle+'</small></div>').join('')
-  const nodes=visible.map(x=>{
-    const l=level(save,x.id),can=available(save,x.id),afford=can&&save.blood>=skillCost(x,l)
-    const index=SKILLS.indexOf(x),iconX=-(index%6)*64,iconY=-Math.floor(index/6)*64
-    return '<button class="skill-node '+(l?'owned ':'')+(can?'unlocked ':'locked ')+(afford?'affordable ':'')+(selected===x.id?'selected':'')+'" style="left:'+x.x+'px;top:'+x.y+'px;--branch:'+BRANCHES[x.branch].color+'" data-skill="'+x.id+'" aria-label="'+x.name+'">'+
-      '<span class="node-orbit"></span><span class="node-icon" style="background-position:'+iconX+'px '+iconY+'px"></span><strong>'+x.name+'</strong><small>'+l+'/'+x.max+'</small></button>'
+  const revealed=(x:typeof SKILLS[number])=>!x.requires||level(save,x.requires)>0
+  // Five fixed columns (one chain per branch) that always fit the screen — no scrolling anywhere.
+  const columns=(Object.keys(BRANCHES) as (keyof typeof BRANCHES)[]).map(key=>{
+    const b=BRANCHES[key],chain=SKILLS.filter(x=>x.branch===key)
+    const owned=chain.reduce((n,x)=>n+level(save,x.id),0)
+    const tiles=chain.map(x=>{
+      const index=SKILLS.indexOf(x)
+      if(!revealed(x))return '<div class="skill-tile hidden" aria-hidden="true"><span class="tile-mystery">?</span></div>'
+      const l=level(save,x.id),can=available(save,x.id),afford=can&&save.blood>=skillCost(x,l)
+      return '<button class="skill-tile '+(l?'owned ':'')+(afford?'affordable ':'')+(l>=x.max?'maxed ':'')+(selected===x.id?'selected':'')+'" data-skill="'+x.id+'" aria-label="'+x.name+'" style="--ix:'+(index%6)+';--iy:'+Math.floor(index/6)+'">'+
+        '<span class="tile-icon"></span><span class="tile-name">'+x.name+'</span><span class="tile-level">'+l+'/'+x.max+'</span></button>'
+    }).join('')
+    const any=chain.some(revealed)
+    return '<div class="skill-column '+(any?'':'dormant')+'" style="--branch:'+b.color+'"><div class="column-head"><b>'+b.label+'</b><small>'+(any?owned+' níveis':'adormecido')+'</small></div><div class="column-tiles">'+tiles+'</div></div>'
   }).join('')
   const lockText=!unlocked&&!max?'Requer '+SKILLS.find(x=>x.id===skill.requires)?.name:save.blood<cost?'Sangue insuficiente':'Disponível'
   const detailIndex=SKILLS.indexOf(skill)
-  return '<section class="tree-page"><div class="section-heading"><div><span class="eyebrow">SANTUÁRIO DAS RAÍZES</span><h1>A árvore da noite</h1><p>Comece por duas raízes. Cada poder desperto revela novas ramificações.</p></div><div class="tree-stat"><b>'+SKILLS.reduce((n,x)=>n+level(save,x.id),0)+'</b><span>poderes<br>despertos</span></div></div>'+
-    '<div class="swipe-hint">← DESLIZE PARA EXPLORAR OS RAMOS →</div><div class="tree-layout"><div class="tree-scroll"><div class="tree-board" style="height:'+boardHeight+'px"><div class="tree-backdrop"></div><div class="tree-top-glow">✦ RAIZ PRIMORDIAL ✦</div>'+labels+
-    '<svg class="tree-lines" viewBox="0 0 1130 '+boardHeight+'" aria-hidden="true">'+paths+'</svg>'+nodes+'</div></div>'+
-    '<aside class="skill-detail" style="--branch:'+branch.color+'"><div class="detail-branch">'+branch.label+' / NÍVEL '+lv+' DE '+skill.max+'</div><div class="detail-glyph" style="background-position:'+(-(detailIndex%6)*128)+'px '+(-Math.floor(detailIndex/6)*128)+'px"></div>'+
-    '<h2>'+skill.name+'</h2><p>'+skill.description+'</p><div class="effect-box"><span>EFEITO POR NÍVEL</span><strong>'+skill.effect+'</strong></div>'+
-    '<div class="detail-status">'+(max?'Poder maximizado':lockText)+'</div>'+
-    '<button class="buy-button" data-action="buy" data-id="'+skill.id+'" '+(!unlocked||save.blood<cost?'disabled':'')+'>'+(max?'MAXIMIZADO':'DESPERTAR · ♦ '+fmt(cost))+'</button>'+
-    '<div class="detail-tip">As raízes iluminadas mostram o caminho já conquistado. Poderes mais profundos exigem o nível anterior.</div></aside></div></section>'
+  return '<section class="tree-page"><div class="section-heading"><div><span class="eyebrow">SANTUÁRIO DAS RAÍZES</span><h1>A árvore da noite</h1></div><div class="tree-stat"><b>'+SKILLS.reduce((n,x)=>n+level(save,x.id),0)+'</b><span>poderes<br>despertos</span></div></div>'+
+    '<div class="tree-layout"><div class="skill-columns">'+columns+'</div>'+
+    '<aside class="skill-detail" style="--branch:'+branch.color+'"><div class="detail-glyph" style="--ix:'+(detailIndex%6)+';--iy:'+Math.floor(detailIndex/6)+'"></div>'+
+    '<div class="detail-text"><div class="detail-branch">'+branch.label+' · NÍVEL '+lv+'/'+skill.max+'</div><h2>'+skill.name+'</h2><p>'+skill.description+'</p></div>'+
+    '<div class="effect-box"><span>POR NÍVEL</span><strong>'+skill.effect+'</strong></div>'+
+    '<button class="buy-button" data-action="buy" data-id="'+skill.id+'" '+(!unlocked||save.blood<cost?'disabled':'')+'>'+(max?'MAXIMIZADO':unlocked?'DESPERTAR · ♦ '+fmt(cost):lockText)+'</button></aside></div></section>'
 }
 function eraTimeline(){
   return '<div class="era-timeline">'+ERAS.map((era,i)=>'<span class="era-step '+(i===save.era?'current':i<save.era?'past':'future')+'" style="--era:'+era.color+'">'+era.icon+'</span>').join('')+'</div>'
@@ -86,7 +84,7 @@ function cityPage(){
   preview=new Night(save)
   return '<section class="city-page"><div class="city-scene"><canvas id="game-canvas" width="'+W+'" height="'+H+'"></canvas><div class="scene-vignette"></div></div>'+
     '<div class="city-ui"><div class="chapter-line"><span>CRÔNICA 0'+(save.era+1)+' / 04</span>'+eraTimeline()+'<span>'+era.years+'</span></div>'+
-    '<div class="city-hero"><div class="city-story"><span class="eyebrow">'+era.name+' · '+d.tag+'</span><h1>'+d.name+'</h1><p>'+era.biome+'</p>'+
+    '<div class="city-hero"><div class="city-story"><span class="eyebrow">'+era.name+' · CIDADE '+(d.city+1)+' DE 5</span><h1>'+d.name+'</h1><p>'+era.biome+'</p>'+
     '<div class="vampire-portrait" style="background-position:0 '+(-save.era*168)+'px" aria-hidden="true"></div></div>'+
     '<div class="mission-scroll"><span class="eyebrow">CONTRATO DE CAÇA</span><h2>'+d.target+'</h2><p>'+d.intro+'</p>'+
     '<div class="mission-rule"><strong>'+fmt(best)+' <small>/ '+fmt(required)+'</small></strong><span>MELHOR NOITE NESTA CIDADE</span></div>'+
@@ -120,15 +118,9 @@ function huntPage(){
 function render(){
   document.body.className='mode-'+mode
   app.innerHTML=header()+'<main>'+(mode==='tree'?skillTree():mode==='city'?cityPage():huntPage())+'</main>'
-  if(mode==='tree')centerTree()
   if(mode==='city'||mode==='hunt')paint()
   updateHUD()
 }
-function centerTree(){
-  const scroll=app.querySelector<HTMLElement>('.tree-scroll'),focus=SKILLS.find(x=>x.id===selected)
-  if(scroll&&focus)scroll.scrollLeft=Math.max(0,focus.x-scroll.clientWidth/2)
-}
-window.addEventListener('resize',()=>{if(mode==='tree')centerTree()})
 function paint(){
   const canvas=document.querySelector<HTMLCanvasElement>('#game-canvas')
   if(!canvas)return
