@@ -84,6 +84,27 @@ function telegraphs(c: CanvasRenderingContext2D, hunt: Hunt, t: number) {
   }
 }
 
+/** Comic speech bubbles over heads; the werewolf's are bigger and red. */
+function bubbles(c: CanvasRenderingContext2D, hunt: Hunt) {
+  for (const b of hunt.bubbles) {
+    const h = hunt.humans.find((x) => x.id === b.id); if (!h) continue
+    const age = b.max - b.life, pop = age < 0.12 ? 0.6 + age / 0.12 * 0.4 : 1
+    const size = b.boss ? 16 : 12
+    c.font = `800 ${size}px Inter, system-ui, sans-serif`
+    const tw = c.measureText(b.text).width, pw = tw + 16, ph = size + 12
+    const top = b.boss ? h.y - 165 * BOSS_WOLVES[hunt.city.index][2] - 18 : h.y - 76
+    const x = Math.max(pw / 2 + 4, Math.min(W - pw / 2 - 4, h.x))
+    c.save(); c.translate(x, top); c.scale(pop, pop); c.globalAlpha = Math.min(1, b.life * 3)
+    c.fillStyle = b.boss ? '#2a0610f0' : '#fffaf0f2'; c.strokeStyle = b.boss ? '#ff3a5c' : '#1a0a14'; c.lineWidth = 2
+    c.beginPath(); c.roundRect(-pw / 2, -ph, pw, ph, 8); c.fill(); c.stroke()
+    c.beginPath(); c.moveTo(h.x - x - 5, -1); c.lineTo(h.x - x, 8); c.lineTo(h.x - x + 5, -1); c.closePath(); c.fill()
+    c.fillStyle = b.boss ? '#ffd0d8' : '#1a0a14'; c.textAlign = 'center'; c.textBaseline = 'middle'
+    c.fillText(b.text, 0, -ph / 2 + 1)
+    c.restore()
+  }
+  c.globalAlpha = 1; c.textBaseline = 'alphabetic'
+}
+
 function human(c: CanvasRenderingContext2D, hunt: Hunt, h: Human, t: number) {
   if (h.kind === 'boss') return werewolf(c, hunt, h, t)
   const atlas = humanAtlas()
@@ -240,6 +261,7 @@ export function drawHunt(c: CanvasRenderingContext2D, hunt: Hunt, t: number) {
   let drawn = false
   for (const h of people) { if (!drawn && h.y > hunt.vampireY) { vampire(c, hunt, t); drawn = true } human(c, hunt, h, t) }
   if (!drawn) vampire(c, hunt, t)
+  bubbles(c, hunt)
   for (const f of hunt.fx) {
     const k = f.age / f.duration
     if (f.row === 3) { // explosion

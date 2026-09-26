@@ -1,6 +1,7 @@
 // One night of hunting: a short, loud, loot-filled run. Pure simulation (no DOM) — the renderer and UI read it.
 import { CITIES, type City, type PactId, type Resource } from './data'
 import { computeStats, type Stats } from './tree'
+import { BOSS_ESCAPE, BOSS_EXPOSED, BOSS_HIT, BOSS_HOWL, BOSS_INTRO, HUMAN_CALM, HUMAN_ERA, HUMAN_PANIC, HUMAN_SHINY, HUMAN_WOLF, pick } from './story'
 import type { Save } from './save'
 import { controlsReserve, huntCamera } from '../viewport'
 
@@ -23,6 +24,8 @@ export interface Fx { x: number; y: number; row: number; age: number; duration: 
 export interface Loot { blood: number; teeth: number; shard: number; pure: number }
 export interface Splat { x: number; y: number; r: number; life: number; rot: number }
 export interface Soul { x: number; y: number; vx: number; vy: number; life: number; color: string; size: number }
+/** A speech bubble attached to a human (or the werewolf) by id. */
+export interface Bubble { id: number; text: string; life: number; max: number; boss: boolean }
 export interface Ring { x: number; y: number; r: number; max: number; life: number; color: string; width: number }
 const COMBO_MARKS = [10, 25, 50, 100, 200, 400]
 
@@ -42,6 +45,8 @@ export class Hunt {
   splats: Splat[] = []
   souls: Soul[] = []
   rings: Ring[] = []
+  bubbles: Bubble[] = []
+  private chatClock = 1.2
   /** Brief slow-motion on big moments (boss kill, shiny). */
   hitStop = 0
   /** Camera punch-in, decays to 0. */
@@ -133,7 +138,7 @@ export class Hunt {
     const h: Human = { id: NEXT++, x, y, vx: rand(-20, 20), vy: rand(-12, 12), hp, maxHp: hp, kind: k, shiny, flash: 0, panic: 0, life: 0 }
     if (k === 'boss') { h.x = (b.left + b.right) / 2; h.y = b.top - 60; h.vx = 0; h.vy = 1; this.boss = h }
     this.humans.push(h)
-    if (shiny) this.sounds.push('shiny')
+    if (shiny) { this.sounds.push('shiny'); this.say(h, pick(HUMAN_SHINY)) }
   }
 
   // ───────── input
@@ -248,6 +253,20 @@ export class Hunt {
       h.vx = clamp(h.vx + rand(-12, 12) * dt, -40, 40); h.vy = clamp(h.vy + rand(-8, 8) * dt, -24, 24)
     }
 
+    // chatter: now and then someone says something (scared if the vampire is close)
+    this.chatClock -= dt
+    if (this.chatClock <= 0) {
+      this.chatClock = rand(1.4, 2.8)
+      const pool = this.humans.filter((h) => h.kind !== 'boss' && !h.flee)
+      const h = pool[Math.floor(Math.random() * pool.length)]
+      if (h) {
+        const near = Math.hypot(h.x - this.auraX, h.y - 26 - this.auraY) < this.radius * 2.5
+        this.say(h, near ? pick(Math.random() < 0.5 ? HUMAN_PANIC : HUMAN_ERA[this.city.era]) : pick(HUMAN_CALM[this.city.era]))
+      }
+    }
+    for (const bb of this.bubbles) bb.life -= dt
+    this.bubbles = this.bubbles.filter((bb) => bb.life > 0 && this.humans.some((h) => h.id === bb.id))
+
     // loot on the ground: bounce, magnet, expire
     const pickup = this.radius * 0.6 + 30 + this.stats.magnet
     for (const d of this.drops) {
@@ -348,10 +367,18 @@ export class Hunt {
   // ───────── the werewolf duel
   get duelTime() { return 20 + this.stats.nightTime * 0.5 }
 
+  say(h: Human, text: string, life = 1.7) {
+    const boss = h.kind === 'boss'
+    this.bubbles = this.bubbles.filter((b) => b.id !== h.id)
+    if (!boss && this.bubbles.filter((b) => !b.boss).length >= 3) return
+    this.bubbles.push({ id: h.id, text, life, max: life, boss })
+  }
+
   private startDuel() {
     this.bossSpawned = true
     const b = this.bounds, mid = (b.left + b.right) / 2
     for (const h of this.humans) { h.flee = true; h.panic = 3; const dir = h.x < mid ? -1 : 1; h.vx = dir * rand(260, 360); h.vy = rand(-30, 30) }
+    for (const h of this.humans.slice(0, 2)) this.say(h, pick(HUMAN_WOLF), 1.4)
     this.spawn('boss')
     const t = this.duelTime
     this.duel = { phase: 'intro', t: 0, timer: t, max: t, cd: 1.4, exposed: 0, howl: 0, attack: null, count: 0 }
@@ -370,7 +397,7 @@ export class Hunt {
     d.howl = Math.max(0, d.howl - dt)
     if (d.phase === 'intro') {
       boss.y += (b.top + 60 - boss.y) * Math.min(1, dt * 2.5)
-      if (d.t > 1.2 && d.howl <= 0 && d.t < 1.3) { d.howl = 0.9; this.sounds.push('howl'); this.shake = 8 }
+      if (d.t > 1.2 && d.howl <= 0 && d.t < 1.3) { d.howl = 0.9; this.sounds.push('howl'); this.shake = 8; this.say(boss, BOSS_INTRO[this.city.index] ?? 'AUUUU!', 2.6) }
       if (d.t > 2.2) d.phase = 'fight'
       return
     }
@@ -384,6 +411,7 @@ export class Hunt {
       if (a.kind === 'slam') {
         if (a.t >= a.windup && !a.done) {
           a.done = true; d.exposed = 1.3
+          if (Math.random() < 0.4 && this.invuln <= 0) this.say(boss, pick(BOSS_EXPOSED), 1.2)
           this.shake = Math.max(this.shake, 9); this.sounds.push('slam')
           this.rings.push({ x: a.x, y: a.y, r: a.r * 0.3, max: a.r * 1.15, life: 0.35, color: '#ffb070', width: 7 })
           this.burst(a.x, a.y - 6, '#b89070', 18)
@@ -417,7 +445,7 @@ export class Hunt {
     d.cd = Math.max(0.8, (enraged ? 1.3 : 1.9) - era * 0.1)
     if (enraged && d.count % 3 === 0) {
       // howl: the werewolf calls prey back into the city — food for the vampire's combo
-      d.howl = 0.9; this.sounds.push('howl'); this.shake = 6
+      d.howl = 0.9; this.sounds.push('howl'); this.shake = 6; this.say(boss, pick(BOSS_HOWL), 1.4)
       for (let k = 0; k < 6; k++) this.spawn('common')
       return
     }
@@ -441,6 +469,7 @@ export class Hunt {
     this.auraX = clamp(this.auraX + dx / d * 90, b.left, b.right); this.auraY = clamp(this.auraY + dy / d * 60, b.top - 60, b.bottom)
     this.targetX = this.auraX; this.targetY = this.auraY
     this.float(this.auraX, this.auraY - 50, '-3s', '#ff4060', 26)
+    if (this.boss) this.say(this.boss, pick(BOSS_HIT), 1.2)
     this.burst(this.auraX, this.auraY, '#ff2a4a', 16)
     this.sounds.push('hurt')
   }
@@ -453,6 +482,7 @@ export class Hunt {
     this.humans = this.humans.filter((h) => h !== boss)
     this.boss = null
     this.float(boss.x, boss.y - 110, 'FUGIU!', '#ffb13b', 28)
+    this.texts.push({ x: boss.x, y: boss.y - 150, vy: -30, life: 2, text: pick(BOSS_ESCAPE), color: '#ffffff', size: 16 })
     for (let k = 0; k < 10; k++) this.sparks.push({ x: boss.x + rand(-30, 30), y: boss.y - rand(0, 90), vx: rand(-80, 80), vy: rand(-120, -20), life: 0.8, color: '#8a8aa0', size: 5 })
     this.sounds.push('escape')
   }

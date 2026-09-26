@@ -307,3 +307,28 @@ button:disabled { cursor: default }
 .moon-clock.duel b { color: #ffb3c0 }
 @keyframes duelpulse { 50% { transform: scale(1.08); filter: drop-shadow(0 0 12px #ff3a5c) } }
 .in-duel .hunt-loot, .in-duel .pact-mini { opacity: .45 }
+
+/* ───────── story dialogue */
+.dialog-veil { position: absolute; inset: 0; z-index: 30; background: linear-gradient(to top, #07030cee 0%, #07030c88 40%, #0000 70%); display: flex; align-items: flex-end; justify-content: center; padding: 0 12px calc(18px + var(--safe-b)); cursor: pointer }
+.dialog-veil.first { animation: veilin .3s ease-out }
+.dialog-veil.first .dialog { animation: dialogin .25s cubic-bezier(.2, 1.4, .4, 1) }
+@keyframes veilin { from { opacity: 0 } }
+.dialog { position: relative; display: flex; gap: 14px; align-items: center; width: min(640px, 100%); padding: 16px 18px; background: linear-gradient(170deg, #2c1432f4, #150a18fa 70%) }
+@keyframes dialogin { from { transform: translateY(20px) scale(.96); opacity: 0 } }
+.dialog-body { flex: 1; min-width: 0 }
+.dialog-name { display: block; font: 900 15px var(--serif); letter-spacing: 1px; color: var(--gold-hi); margin-bottom: 4px }
+.speaker-lobo .dialog-name { color: #ff7088 }
+.speaker-barto .dialog-name { color: #9fd8ff }
+.dialog p { margin: 0; font: 700 16px/1.35 var(--body); color: #fff; animation: textin .35s ease-out }
+@keyframes textin { from { opacity: 0; transform: translateX(-6px) } }
+.dialog small { display: block; margin-top: 6px; font: 700 11px var(--body); color: var(--muted); animation: hintpulse 1.6s ease-in-out infinite }
+.pt { flex: none; width: 84px; height: 84px; border-radius: 14px; border: 3px solid #b8893f; background-color: #120913; background-repeat: no-repeat; image-rendering: pixelated; box-shadow: 0 4px 10px #000a inset }
+.pt-conde { background-image: url(/assets/sprites/vampires.png); background-size: 600% 400%; background-position: 0 calc(var(--era) * 33.333%) }
+.pt-lobo { background-size: 1600% 110%; background-position: 0 10%; border-color: #ff3a5c }
+.pt-barto { display: grid; place-items: center; font-size: 46px; border-color: #6fb8e8; animation: bartofly 1.2s ease-in-out infinite }
+@keyframes bartofly { 50% { transform: translateY(-4px) rotate(-4deg) } }
+.dialog-skip { position: absolute; top: calc(12px + var(--safe-t)); right: calc(12px + var(--safe-r)); padding: 8px 14px; border-radius: 20px; border: 2px solid #b8893f88; background: #120913cc; color: var(--muted); font: 800 12px var(--body); cursor: pointer }
+.barto-tip { display: flex; align-items: center; gap: 8px; margin: 0 auto 10px; max-width: 460px; padding: 6px 12px; border-radius: 12px; background: #0e0714aa; border: 1px solid #6fb8e844; font: 600 12.5px/1.3 var(--body); color: #d9e9f5; text-align: left }
+.barto-ico { font-style: normal; font-size: 18px; flex: none }
+@media (max-width: 640px) { .pt { width: 66px; height: 66px } .dialog p { font-size: 14.5px } .pt-barto { font-size: 36px } }
+@media (max-height: 520px) { .barto-tip { display: none } .dialog { padding: 10px 14px } .pt { width: 60px; height: 60px } .dialog p { font-size: 14px } }

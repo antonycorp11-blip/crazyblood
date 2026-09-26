@@ -16,18 +16,20 @@ export interface Save {
   bestNight: number
   victory: boolean
   muted: boolean
+  /** Next story chapter to play (see story.ts). */
+  story: number
 }
 
 const KEY = 'crazyblood-lootfest-v6'
 const fresh = (): Save => ({
   v: 6, res: { blood: 0, teeth: 0, shard: 0, pure: 0 }, levels: {}, city: 0, unlocked: 0, cleared: {}, echoes: 0,
-  pact: null, nights: 0, captures: 0, shinies: 0, bestNight: 0, victory: false, muted: false,
+  pact: null, nights: 0, captures: 0, shinies: 0, bestNight: 0, victory: false, muted: false, story: 0,
 })
 
 export function load(): Save {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) || 'null')
-    if (raw && raw.v === 6) return { ...fresh(), ...raw, res: { ...fresh().res, ...raw.res }, levels: raw.levels || {}, cleared: raw.cleared || {} }
+    if (raw && raw.v === 6) return { ...fresh(), ...raw, res: { ...fresh().res, ...raw.res }, levels: raw.levels || {}, cleared: raw.cleared || {}, story: raw.story ?? Object.keys(raw.cleared || {}).length }
   } catch { /* corrupted save: start over */ }
   return fresh()
 }

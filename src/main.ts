@@ -1,11 +1,12 @@
 import './style.css'
-import { CITIES, ERAS, PACTS, RESOURCES, type PactId, type Resource } from './game/data'
+import { BOSS_WOLVES, CITIES, ERAS, PACTS, RESOURCES, type PactId, type Resource } from './game/data'
 import { Hunt, fmtShort } from './game/hunt'
 import { bankNight, type NightReport } from './game/night-end'
 import { affordableCount, buyNode, canBuy, isMaxed, isRevealed, priceOf, rollPacts } from './game/progress'
 import { level, load, persist, resetSave, type Save } from './game/save'
 import { NODES, NODE_BY_ID, computeStats, describe, type TreeNode } from './game/tree'
 import { drawHunt } from './render/world'
+import { CHAPTERS, SPEAKERS, lairTip } from './game/story'
 import { drawLair, lairState } from './render/lair'
 import { camera, huntCamera } from './viewport'
 import { ambience, setIntensity, sfx, setMuted, unlockAudio } from './sound'
@@ -51,6 +52,7 @@ function lairView() {
     <h1 class="city-title">${c.name}</h1>
     <div class="boss-line">${save.cleared[c.index] ? '☠ Chefe derrotado — cace à vontade' : `Chefe <b>${c.boss}</b> surge após <b>${needed}</b> capturas numa noite`}</div>
     <div class="medals">${medals}</div>
+    <div class="barto-tip"><i class="barto-ico" aria-hidden="true">🦇</i>${lairTip(c.era, eraCities.filter((x) => save.cleared[x.index]).length, c.boss, !!save.cleared[c.index])}</div>
     ${pact}
     <div class="lair-actions">
       <button class="big-btn tree-btn" data-action="tree">${skillIcon(6)}<span>ÁRVORE</span>${afford ? `<em class="badge">${afford}</em>` : ''}</button>
@@ -58,6 +60,28 @@ function lairView() {
     </div>
   </div>`
 }
+
+// ───────────────────────── STORY (dialogue after each werewolf falls)
+let dialog: { ch: number; i: number } | null = null
+const clearedCount = () => Object.keys(save.cleared).length
+function dialogView() {
+  if (!dialog) return ''
+  const [who, text] = CHAPTERS[dialog.ch][dialog.i]
+  const wolf = Math.max(0, dialog.ch - 1)
+  const era = Math.min(3, Math.floor(save.city / 5))
+  const portrait = who === 'conde' ? `<span class="pt pt-conde" style="--era:${era}"></span>`
+    : who === 'lobo' ? `<span class="pt pt-lobo" style="background-image:url(/assets/wolves/${BOSS_WOLVES[wolf][0]}.webp)"></span>`
+    : '<span class="pt pt-barto">🦇</span>'
+  const name = who === 'lobo' ? CITIES[wolf].boss : SPEAKERS[who]
+  return `<div class="dialog-veil ${dialog.i === 0 ? 'first' : ''}" data-action="dialog-next">
+    <div class="dialog frame speaker-${who}">
+      ${portrait}
+      <div class="dialog-body"><b class="dialog-name">${name}</b><p>${text}</p><small>toque para continuar ▸</small></div>
+    </div>
+    <button class="dialog-skip" data-action="dialog-skip">pular ⏭</button>
+  </div>`
+}
+function endChapter() { save.story++; persist(save); dialog = null; render() }
 
 // ───────────────────────── HUNT
 function huntView() {
@@ -199,7 +223,8 @@ function nodeSheet() {
 
 // ───────────────────────── render + canvas
 function render() {
-  app.innerHTML = `<div class="game screen-${screen}"><canvas id="stage"></canvas><div class="ui">${screen === 'lair' ? lairView() : screen === 'hunt' ? huntView() : treeView()}</div>${report ? resultView(report) : ''}</div>`
+  if (screen === 'lair' && !report && !dialog && save.story < CHAPTERS.length && save.story <= clearedCount()) dialog = { ch: save.story, i: 0 }
+  app.innerHTML = `<div class="game screen-${screen}"><canvas id="stage"></canvas><div class="ui">${screen === 'lair' ? lairView() : screen === 'hunt' ? huntView() : treeView()}</div>${report ? resultView(report) : ''}${screen === 'lair' ? dialogView() : ''}</div>`
   ambience(screen === 'hunt' && !report ? (hunt?.duel ? 'boss' : 'hunt') : 'lair')
   if (report) animateResult()
   if (screen === 'tree') bindTree()
@@ -294,6 +319,8 @@ app.addEventListener('click', (e) => {
   switch (el.dataset.action) {
     case 'hunt': startHunt(); break
     case 'flee': endHunt(); break
+    case 'dialog-next': if (dialog) { sfx('click'); dialog.i++; if (dialog.i >= CHAPTERS[dialog.ch].length) endChapter(); else render() } break
+    case 'dialog-skip': if (dialog) { sfx('click'); endChapter() } break
     case 'tree': report = null; screen = 'tree'; sfx('click'); render(); break
     case 'lair': report = null; hunt = null; screen = 'lair'; sfx('click'); render(); break
     case 'mute': save.muted = !save.muted; setMuted(save.muted); persist(save); render(); break
